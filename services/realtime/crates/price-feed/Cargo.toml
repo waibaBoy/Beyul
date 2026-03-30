@@ -1,0 +1,10 @@
+[package]
+name = "price-feed"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+shared = { path = "../shared" }
+tokio.workspace = true

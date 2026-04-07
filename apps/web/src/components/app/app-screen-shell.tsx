@@ -3,21 +3,28 @@ import { AppRouteNav } from "@/components/app/app-route-nav";
 
 type AppScreenShellProps = {
   children: ReactNode;
-  eyebrow: string;
-  title: string;
-  description: string;
+  eyebrow?: string;
+  title?: string;
+  description?: string;
 };
 
-export const AppScreenShell = ({ children, description, eyebrow, title }: AppScreenShellProps) => {
+export const AppScreenShell = ({ children, eyebrow, title, description }: AppScreenShellProps) => {
+  const heading = eyebrow ?? title;
+  const subtitle = eyebrow ? title : description;
+  const hasHeader = Boolean(heading);
+
   return (
-    <main className="auth-page">
-      <section className="auth-hero">
-        <div className="eyebrow">{eyebrow}</div>
-        <h1>{title}</h1>
-        <p>{description}</p>
-        <AppRouteNav />
-      </section>
-      <section className="auth-page-grid">{children}</section>
-    </main>
+    <div className="app-shell">
+      <AppRouteNav />
+      <main className="app-main">
+        {hasHeader && (
+          <div className="app-page-header">
+            <h1 className="app-page-title">{heading}</h1>
+            {subtitle && <p className="app-page-desc">{subtitle}</p>}
+          </div>
+        )}
+        <div style={{ display: "grid", gap: "16px" }}>{children}</div>
+      </main>
+    </div>
   );
 };

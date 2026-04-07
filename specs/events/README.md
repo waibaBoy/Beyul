@@ -4,7 +4,7 @@ This directory will hold the canonical cross-service event model.
 
 Initial channels to formalize:
 
-- `engine.orders.incoming`
+- `engine.orders.incoming` (Redis list queue)
 - `engine.orders.accepted`
 - `engine.orders.rejected`
 - `engine.trades.executed`
@@ -16,6 +16,11 @@ Initial channels to formalize:
 
 Questions to settle:
 
-- whether Redis Streams or Pub/Sub is the primary transport
+- whether Redis Streams should replace the current Redis list queue for order intake
 - event idempotency and replay strategy
 - whether trade events are persisted before or after pub/sub fanout
+
+Current implementation note:
+
+- order intake uses a Redis list queue consumed by the Rust matching engine
+- fanout events use Redis Pub/Sub

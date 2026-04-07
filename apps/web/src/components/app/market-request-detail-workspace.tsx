@@ -5,16 +5,124 @@ import { AuthFeedback } from "@/components/auth/auth-feedback";
 import { useAuth } from "@/components/auth/auth-provider";
 import { useAuthAction } from "@/components/auth/use-auth-action";
 import { beyulApiFetch } from "@/lib/api/beyul-api";
+import { buildTemplateContractPrefill } from "@/lib/markets/request-templates";
 import type { MarketRequest, MarketRequestAnswer } from "@/lib/api/types";
 
 type MarketRequestDetailWorkspaceProps = {
   requestId: string;
 };
 
-const defaultAnswerForm = {
-  questionKey: "",
-  questionLabel: "",
-  answerText: ""
+const contractAnswerFields = [
+  {
+    key: "category",
+    label: "Category",
+    placeholder: "Crypto",
+    helpText: "Top-level discovery bucket for the market."
+  },
+  {
+    key: "subcategory",
+    label: "Subcategory",
+    placeholder: "Bitcoin",
+    helpText: "More specific grouping shown under the main category."
+  },
+  {
+    key: "reference_label",
+    label: "Reference label",
+    placeholder: "BTC/USD price at open",
+    helpText: "Short label for the contract reference shown on the market page."
+  },
+  {
+    key: "reference_source_label",
+    label: "Reference source",
+    placeholder: "Chainlink Crypto Feeds",
+    helpText: "Human-readable source label shown in the contract details."
+  },
+  {
+    key: "reference_asset",
+    label: "Reference asset",
+    placeholder: "BTC/USD",
+    helpText: "Underlying asset or instrument symbol."
+  },
+  {
+    key: "reference_price",
+    label: "Reference price",
+    placeholder: "67567.69",
+    helpText: "Opening or baseline reference value if the contract uses one."
+  },
+  {
+    key: "price_to_beat",
+    label: "Price to beat",
+    placeholder: "67627.45",
+    helpText: "Strike or target value the market is resolving against."
+  },
+  {
+    key: "reference_timestamp",
+    label: "Reference timestamp",
+    placeholder: "2026-03-31T02:00:00Z",
+    helpText: "ISO timestamp for the reference snapshot."
+  },
+  {
+    key: "contract_notes",
+    label: "Contract notes",
+    placeholder: "This market resolves to Up if the closing BTC/USD value is at or above the opening value.",
+    helpText: "Optional notes carried into the contract metadata."
+  }
+] as const;
+
+type ContractAnswerKey = (typeof contractAnswerFields)[number]["key"];
+type ContractAnswerForm = Record<ContractAnswerKey, string>;
+
+const contractAnswerAliases: Record<ContractAnswerKey, string[]> = {
+  category: ["category", "market_category"],
+  subcategory: ["subcategory", "sub_category"],
+  reference_label: ["reference_label", "settlement_source"],
+  reference_source_label: ["reference_source_label", "settlement_source", "source_label"],
+  reference_asset: ["reference_asset", "asset_symbol"],
+  reference_price: ["reference_price", "opening_price", "reference_value"],
+  price_to_beat: ["price_to_beat", "strike_price", "target_price"],
+  reference_timestamp: ["reference_timestamp", "price_timestamp", "window_start_at"],
+  contract_notes: ["contract_notes", "why_now", "resolution_notes", "market_notes"]
+};
+
+const defaultContractForm = contractAnswerFields.reduce((accumulator, field) => {
+  accumulator[field.key] = "";
+  return accumulator;
+}, {} as ContractAnswerForm);
+
+const mergeAnswer = (answers: MarketRequestAnswer[], saved: MarketRequestAnswer) => {
+  const withoutCurrent = answers.filter((item) => item.question_key !== saved.question_key);
+  return [...withoutCurrent, saved].sort((left, right) => left.question_key.localeCompare(right.question_key));
+};
+
+const buildContractForm = (
+  marketRequest: MarketRequest | null,
+  answers: MarketRequestAnswer[]
+): ContractAnswerForm => {
+  const templatePrefill = buildTemplateContractPrefill(marketRequest?.template_key, marketRequest?.template_config);
+  return contractAnswerFields.reduce((accumulator, field) => {
+    const aliasMatch = contractAnswerAliases[field.key]
+      .map((alias) => answers.find((answer) => answer.question_key === alias)?.answer_text?.trim() ?? "")
+      .find(Boolean);
+
+    if (aliasMatch) {
+      accumulator[field.key] = aliasMatch;
+      return accumulator;
+    }
+
+    const templateValue = templatePrefill[field.key];
+    if (templateValue) {
+      accumulator[field.key] = templateValue;
+      return accumulator;
+    }
+
+    if (field.key === "contract_notes" && marketRequest?.description) {
+      accumulator[field.key] = marketRequest.description;
+      return accumulator;
+    }
+
+    accumulator[field.key] = "";
+    return accumulator;
+  }, { ...defaultContractForm });
 };
 
 export const MarketRequestDetailWorkspace = ({ requestId }: MarketRequestDetailWorkspaceProps) => {
@@ -22,7 +130,7 @@ export const MarketRequestDetailWorkspace = ({ requestId }: MarketRequestDetailW
   const [marketRequest, setMarketRequest] = useState<MarketRequest | null>(null);
   const [answers, setAnswers] = useState<MarketRequestAnswer[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [form, setForm] = useState(defaultAnswerForm);
+  const [contractForm, setContractForm] = useState<ContractAnswerForm>(defaultContractForm);
   const isDraft = marketRequest?.status === "draft";
   const { errorMessage, isSubmitting, runAction, setStatusMessage, statusMessage } = useAuthAction(
     "Load the request detail, intake answers, and submission state."
@@ -51,6 +159,7 @@ export const MarketRequestDetailWorkspace = ({ requestId }: MarketRequestDetailW
         if (isMounted) {
           setMarketRequest(nextRequest);
           setAnswers(nextAnswers);
+          setContractForm(buildContractForm(nextRequest, nextAnswers));
           setStatusMessage(`Loaded ${nextAnswers.length} answers for this request.`);
         }
       } catch (error) {
@@ -100,6 +209,10 @@ export const MarketRequestDetailWorkspace = ({ requestId }: MarketRequestDetailW
               <dt>Review notes</dt>
               <dd>{marketRequest.review_notes || "None"}</dd>
             </div>
+            <div>
+              <dt>Template</dt>
+              <dd>{marketRequest.template_key || "Manual"}</dd>
+            </div>
           </dl>
         ) : (
           <p>Market request not found or not accessible.</p>
@@ -107,8 +220,11 @@ export const MarketRequestDetailWorkspace = ({ requestId }: MarketRequestDetailW
       </section>
 
       <section className="auth-section">
-        <h2>Answer intake questions</h2>
-        <p>Keep answers in draft until the request is ready for moderation.</p>
+        <h2>Contract intake</h2>
+        <p>Fill the structured contract fields that drive the market header, contract details, and price-to-beat presentation after publish.</p>
+        {answers.length === 0 && marketRequest?.description ? (
+          <p>The request has no saved contract-answer rows yet, so the form is prefilled from the base request where possible.</p>
+        ) : null}
 
         <form
           className="auth-form"
@@ -118,61 +234,83 @@ export const MarketRequestDetailWorkspace = ({ requestId }: MarketRequestDetailW
               "Saving market intake answer...",
               async () => {
                 const accessToken = await getAccessToken();
-                const saved = await beyulApiFetch<MarketRequestAnswer>(
-                  `/api/v1/market-requests/${requestId}/answers/${encodeURIComponent(form.questionKey)}`,
-                  {
-                    method: "PUT",
-                    accessToken,
-                    json: {
-                      question_label: form.questionLabel,
-                      answer_text: form.answerText || undefined
-                    }
+                let nextAnswers = [...answers];
+                for (const field of contractAnswerFields) {
+                  const answerText = contractForm[field.key].trim();
+                  if (!answerText) {
+                    continue;
                   }
-                );
-                setAnswers((current) => {
-                  const withoutCurrent = current.filter((item) => item.question_key !== saved.question_key);
-                  return [...withoutCurrent, saved].sort((left, right) => left.question_key.localeCompare(right.question_key));
-                });
-                setForm(defaultAnswerForm);
-                return saved;
+                  const saved = await beyulApiFetch<MarketRequestAnswer>(
+                    `/api/v1/market-requests/${requestId}/answers/${encodeURIComponent(field.key)}`,
+                    {
+                      method: "PUT",
+                      accessToken,
+                      json: {
+                        question_label: field.label,
+                        answer_text: answerText
+                      }
+                    }
+                  );
+                  nextAnswers = mergeAnswer(nextAnswers, saved);
+                }
+                setAnswers(nextAnswers);
+                return nextAnswers.length;
               },
               {
-                successMessage: (saved) => `Saved answer for ${saved.question_label}.`
+                successMessage: (savedCount) =>
+                  savedCount > 0
+                    ? `Saved ${savedCount} contract field${savedCount === 1 ? "" : "s"}.`
+                    : "Nothing to save yet. Add at least one contract field."
               }
             );
           }}
         >
-          <div className="field">
-            <label htmlFor="answer-key">Question key</label>
-            <input
-              id="answer-key"
-              placeholder="settlement_source"
-              value={form.questionKey}
-              onChange={(event) => setForm((current) => ({ ...current, questionKey: event.target.value }))}
-            />
-          </div>
-          <div className="field">
-            <label htmlFor="answer-label">Question label</label>
-            <input
-              id="answer-label"
-              placeholder="Settlement source"
-              value={form.questionLabel}
-              onChange={(event) => setForm((current) => ({ ...current, questionLabel: event.target.value }))}
-            />
-          </div>
-          <div className="field">
-            <label htmlFor="answer-text">Answer text</label>
-            <textarea
-              id="answer-text"
-              placeholder="Use the official source and explain the exact resolution trigger."
-              rows={5}
-              value={form.answerText}
-              onChange={(event) => setForm((current) => ({ ...current, answerText: event.target.value }))}
-            />
+          <div className="entity-list">
+            {contractAnswerFields.map((field) => (
+              <article className="entity-card" key={field.key}>
+                <div className="entity-card-header">
+                  <strong>{field.label}</strong>
+                  <span className="pill">{field.key}</span>
+                </div>
+                <p>{field.helpText}</p>
+                {field.key === "contract_notes" ? (
+                  <div className="field">
+                    <label htmlFor={field.key}>{field.label}</label>
+                    <textarea
+                      id={field.key}
+                      placeholder={field.placeholder}
+                      rows={4}
+                      value={contractForm[field.key]}
+                      onChange={(event) =>
+                        setContractForm((current) => ({
+                          ...current,
+                          [field.key]: event.target.value
+                        }))
+                      }
+                    />
+                  </div>
+                ) : (
+                  <div className="field">
+                    <label htmlFor={field.key}>{field.label}</label>
+                    <input
+                      id={field.key}
+                      placeholder={field.placeholder}
+                      value={contractForm[field.key]}
+                      onChange={(event) =>
+                        setContractForm((current) => ({
+                          ...current,
+                          [field.key]: event.target.value
+                        }))
+                      }
+                    />
+                  </div>
+                )}
+              </article>
+            ))}
           </div>
           <div className="button-row">
             <button className="button-primary" disabled={isSubmitting || !session || !isDraft} type="submit">
-              Save answer
+              Save contract fields
             </button>
             <button
               className="button-secondary"

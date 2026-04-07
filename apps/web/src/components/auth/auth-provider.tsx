@@ -8,7 +8,9 @@ import {
   useState,
   type ReactNode
 } from "react";
-import type { Session, User } from "@supabase/supabase-js";
+import type { User } from "@supabase/supabase-js";
+import { beyulApiFetch } from "@/lib/api/beyul-api";
+import type { BackendUser } from "@/lib/api/types";
 import { normalizePhoneNumber, normalizePhoneOtpToken } from "@/lib/auth/phone";
 import { publicEnv } from "@/lib/env";
 import { getSupabaseBrowserClient } from "@/lib/supabase/browser";
@@ -24,9 +26,14 @@ type SignUpInput = PasswordAuthInput & {
   phone?: string;
 };
 
+type AuthSession = {
+  access_token: string;
+};
+
 type AuthContextValue = {
-  session: Session | null;
+  session: AuthSession | null;
   user: User | null;
+  backendUser: BackendUser | null;
   isReady: boolean;
   signUpWithPassword: (input: SignUpInput) => Promise<void>;
   signInWithPassword: (input: PasswordAuthInput) => Promise<void>;
@@ -42,12 +49,17 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 
 type AuthProviderProps = {
   children: ReactNode;
-  initialSession: Session | null;
+  initialAccessToken: string | null;
+  initialUser: User | null;
 };
 
-export const AuthProvider = ({ children, initialSession }: AuthProviderProps) => {
-  const [session, setSession] = useState<Session | null>(initialSession);
-  const [user, setUser] = useState<User | null>(initialSession?.user ?? null);
+const toAuthSession = (accessToken: string | null): AuthSession | null =>
+  accessToken ? { access_token: accessToken } : null;
+
+export const AuthProvider = ({ children, initialAccessToken, initialUser }: AuthProviderProps) => {
+  const [session, setSession] = useState<AuthSession | null>(toAuthSession(initialAccessToken));
+  const [user, setUser] = useState<User | null>(initialUser);
+  const [backendUser, setBackendUser] = useState<BackendUser | null>(null);
   const [isReady, setIsReady] = useState(false);
   const supabase = getSupabaseBrowserClient();
 
@@ -61,7 +73,7 @@ export const AuthProvider = ({ children, initialSession }: AuthProviderProps) =>
       ]);
 
       if (isMounted) {
-        setSession(sessionData.session);
+        setSession(toAuthSession(sessionData.session?.access_token ?? null));
         setUser(userData.user ?? null);
         setIsReady(true);
       }
@@ -72,7 +84,7 @@ export const AuthProvider = ({ children, initialSession }: AuthProviderProps) =>
     const {
       data: { subscription }
     } = supabase.auth.onAuthStateChange((_event, nextSession) => {
-      setSession(nextSession);
+      setSession(toAuthSession(nextSession?.access_token ?? null));
       void supabase.auth.getUser().then(({ data }) => {
         if (isMounted) {
           setUser(data.user ?? null);
@@ -87,10 +99,43 @@ export const AuthProvider = ({ children, initialSession }: AuthProviderProps) =>
     };
   }, [supabase]);
 
+  useEffect(() => {
+    let isMounted = true;
+
+    const syncBackendUser = async () => {
+      if (!session?.access_token) {
+        if (isMounted) {
+          setBackendUser(null);
+        }
+        return;
+      }
+
+      try {
+        const nextBackendUser = await beyulApiFetch<BackendUser>("/api/v1/auth/me", {
+          accessToken: session.access_token
+        });
+        if (isMounted) {
+          setBackendUser(nextBackendUser);
+        }
+      } catch {
+        if (isMounted) {
+          setBackendUser(null);
+        }
+      }
+    };
+
+    void syncBackendUser();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [session?.access_token]);
+
   const value = useMemo<AuthContextValue>(
     () => ({
       session,
       user,
+      backendUser,
       isReady,
       async signUpWithPassword(input) {
         const { error } = await supabase.auth.signUp({
@@ -163,8 +208,14 @@ export const AuthProvider = ({ children, initialSession }: AuthProviderProps) =>
         if (error) {
           throw error;
         }
+        setSession(null);
+        setUser(null);
+        setBackendUser(null);
       },
       async getAccessToken() {
+        if (session?.access_token) {
+          return session.access_token;
+        }
         const { data, error } = await supabase.auth.getSession();
         if (error) {
           throw error;
@@ -172,7 +223,7 @@ export const AuthProvider = ({ children, initialSession }: AuthProviderProps) =>
         return data.session?.access_token ?? null;
       }
     }),
-    [isReady, session, supabase, user]
+    [backendUser, isReady, session?.access_token, supabase, user]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

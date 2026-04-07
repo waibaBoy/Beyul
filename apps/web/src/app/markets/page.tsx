@@ -5,8 +5,8 @@ export default function MarketsPage() {
   return (
     <AppScreenShell
       eyebrow="Markets"
-      title="Inspect the canonical markets created from approved requests."
-      description="This surface shows the first real publish step from intake into a canonical market record with outcomes."
+      title="Browse live markets through community filters and exchange-style rows."
+      description="Use the community rail to narrow the board, open a featured market fast, and drill into active books below."
     >
       <MarketsWorkspace />
     </AppScreenShell>

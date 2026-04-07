@@ -10,9 +10,25 @@ import type { Market } from "@/lib/api/types";
 export const MarketsWorkspace = () => {
   const [markets, setMarkets] = useState<Market[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [selectedCommunityFilter, setSelectedCommunityFilter] = useState("all");
   const { errorMessage, setStatusMessage, statusMessage } = useAuthAction(
     "Load converted canonical markets from the live backend."
   );
+
+  const communityFilters = Array.from(
+    new Set(markets.map((market) => market.community_name).filter((value): value is string => Boolean(value)))
+  );
+  const filteredMarkets = markets.filter((market) => {
+    if (selectedCommunityFilter === "all") {
+      return true;
+    }
+    if (selectedCommunityFilter === "standalone") {
+      return !market.community_name;
+    }
+    return market.community_name === selectedCommunityFilter;
+  });
+  const featuredMarket = filteredMarkets[0] ?? null;
+  const remainingMarkets = featuredMarket ? filteredMarkets.slice(1) : [];
 
   useEffect(() => {
     let isMounted = true;
@@ -46,41 +62,113 @@ export const MarketsWorkspace = () => {
     <section className="auth-section">
       <h2>Published markets</h2>
       <p>These are the canonical market rows created from approved market requests.</p>
+      <div className="markets-toolbar">
+        <div className="markets-filter-bar" aria-label="Market communities">
+          <button
+            className={`market-filter-pill ${selectedCommunityFilter === "all" ? "is-active" : ""}`}
+            onClick={() => setSelectedCommunityFilter("all")}
+            type="button"
+          >
+            All markets
+          </button>
+          {communityFilters.map((communityName) => (
+            <button
+              className={`market-filter-pill ${selectedCommunityFilter === communityName ? "is-active" : ""}`}
+              key={communityName}
+              onClick={() => setSelectedCommunityFilter(communityName)}
+              type="button"
+            >
+              {communityName}
+            </button>
+          ))}
+          {markets.some((market) => !market.community_name) ? (
+            <button
+              className={`market-filter-pill ${selectedCommunityFilter === "standalone" ? "is-active" : ""}`}
+              onClick={() => setSelectedCommunityFilter("standalone")}
+              type="button"
+            >
+              Standalone
+            </button>
+          ) : null}
+        </div>
+        <span className="pill">{filteredMarkets.length} shown</span>
+      </div>
 
       {isLoading ? (
         <p>Loading markets...</p>
       ) : markets.length === 0 ? (
         <p>No published markets yet.</p>
+      ) : filteredMarkets.length === 0 ? (
+        <p>No published markets for this community filter yet.</p>
       ) : (
-        <div className="entity-list">
-          {markets.map((market) => (
-            <article className="entity-card" key={market.id}>
+        <div className="markets-layout">
+          {featuredMarket ? (
+            <article className="entity-card market-feature-card">
               <div className="entity-card-header">
-                <strong>{market.title}</strong>
-                <span className="pill">{market.status}</span>
+                <strong>Featured market</strong>
+                <span className="pill">{featuredMarket.status}</span>
               </div>
-              <p>{market.question}</p>
-              <dl className="kv-list compact">
+              <h3>{featuredMarket.title}</h3>
+              <p>{featuredMarket.question}</p>
+              <div className="market-summary-meta">
+                <span className="market-meta-chip">{featuredMarket.community_name || "Standalone"}</span>
+                <span className="market-meta-chip">{featuredMarket.rail_mode}</span>
+                <span className="market-meta-chip">{featuredMarket.resolution_mode}</span>
+              </div>
+              <dl className="kv-list compact market-feature-kv">
                 <div>
                   <dt>Slug</dt>
-                  <dd>{market.slug}</dd>
-                </div>
-                <div>
-                  <dt>Rail</dt>
-                  <dd>{market.rail_mode}</dd>
+                  <dd>{featuredMarket.slug}</dd>
                 </div>
                 <div>
                   <dt>Outcomes</dt>
-                  <dd>{market.outcomes.map((outcome) => outcome.label).join(", ")}</dd>
+                  <dd>{featuredMarket.outcomes.map((outcome) => outcome.label).join(", ")}</dd>
+                </div>
+                <div>
+                  <dt>Access</dt>
+                  <dd>{featuredMarket.market_access_mode}</dd>
                 </div>
               </dl>
               <div className="button-row">
-                <Link className="button-secondary hero-link" href={`/markets/${market.slug}`}>
+                <Link className="button-primary hero-link" href={`/markets/${featuredMarket.slug}`}>
                   Open market
                 </Link>
               </div>
             </article>
-          ))}
+          ) : null}
+
+          <div className="markets-rows">
+            {remainingMarkets.map((market) => (
+              <article className="entity-card market-row-card" key={market.id}>
+                <div className="market-row-main">
+                  <div className="entity-card-header">
+                    <strong>{market.title}</strong>
+                    <span className="pill">{market.status}</span>
+                  </div>
+                  <p>{market.question}</p>
+                  <div className="market-summary-meta">
+                    <span className="market-meta-chip">{market.community_name || "Standalone"}</span>
+                    <span className="market-meta-chip">{market.rail_mode}</span>
+                  </div>
+                </div>
+                <dl className="kv-list compact market-row-kv">
+                  <div>
+                    <dt>Slug</dt>
+                    <dd>{market.slug}</dd>
+                  </div>
+                  <div>
+                    <dt>Outcomes</dt>
+                    <dd>{market.outcomes.map((outcome) => outcome.label).join(", ")}</dd>
+                  </div>
+                </dl>
+                <div className="button-row market-row-actions">
+                  <Link className="button-secondary hero-link" href={`/markets/${market.slug}`}>
+                    Open market
+                  </Link>
+                </div>
+              </article>
+            ))}
+          </div>
         </div>
       )}
 

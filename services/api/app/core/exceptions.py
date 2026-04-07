@@ -12,3 +12,7 @@ class ConflictError(AppError):
 
 class ForbiddenError(AppError):
     """Raised when the current actor is not allowed to perform an action."""
+
+
+class ServiceUnavailableError(AppError):
+    """Raised when a required internal dependency is unavailable."""

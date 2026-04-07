@@ -6,8 +6,8 @@ export default function AccountPage() {
   return (
     <AuthScreenShell
       eyebrow="Account"
-      title="Inspect the current session and verify backend trust."
-      description="Use this screen to prove that the Supabase access token generated on the frontend is accepted by the FastAPI bearer auth layer."
+      title="Review your account, PnL context, and session state."
+      description="Use this screen as the quick account hub before jumping into your full portfolio or market activity."
     >
       <AccountCard />
       <AuthSessionCard />

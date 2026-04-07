@@ -22,8 +22,8 @@ export const SignUpCard = () => {
 
   return (
     <section className="auth-section">
-      <h2>Email sign up</h2>
-      <p>Start with email/password and attach username, display name, and phone metadata at sign-up time.</p>
+      <h2>Create your account</h2>
+      <p>Set up your identity once so your profile, markets, and portfolio all stay connected.</p>
 
       <form
         className="auth-form"

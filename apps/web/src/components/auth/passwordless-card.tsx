@@ -18,8 +18,8 @@ export const PasswordlessCard = () => {
 
   return (
     <section className="auth-section">
-      <h2>Passwordless</h2>
-      <p>These flows reuse the same callback route and session state as standard email or Google sign-in.</p>
+      <h2>Passwordless access</h2>
+      <p>Use a magic link or SMS code for a faster sign-in flow without typing a password.</p>
 
       <div className="auth-form">
         <div className="field">

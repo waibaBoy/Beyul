@@ -27,10 +27,9 @@ export const PhoneVerifyCard = () => {
 
   return (
     <section className="auth-section">
-      <h2>Verify phone OTP</h2>
+      <h2>Confirm your phone</h2>
       <p>
-        Complete the passwordless phone flow by entering the SMS code. This works with Supabase test phone numbers
-        now and real SMS providers later.
+        Enter the code sent to your phone to finish signing in and continue into your account.
       </p>
 
       <div className="field">

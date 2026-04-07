@@ -6,8 +6,8 @@ export default function PasswordlessPage() {
   return (
     <AuthScreenShell
       eyebrow="Passwordless"
-      title="Support fast entry with magic links and phone OTP."
-      description="This route isolates the passwordless flows so you can evolve OTP, magic link, and later wallet-first entry without rewriting session plumbing."
+      title="Use magic links or phone OTP for faster access."
+      description="Choose the fastest way back into your account without relying on a password."
     >
       <PasswordlessCard />
       <AuthSessionCard />

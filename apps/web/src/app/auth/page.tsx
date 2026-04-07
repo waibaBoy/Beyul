@@ -25,7 +25,7 @@ const routes = [
   {
     href: "/auth/account",
     title: "Account",
-    description: "Inspect the current session and verify FastAPI bearer-token auth."
+    description: "Open your account overview with balances, PnL context, and session controls."
   }
 ];
 
@@ -33,8 +33,8 @@ export default function AuthIndexPage() {
   return (
     <AuthScreenShell
       eyebrow="Auth Routes"
-      title="Reusable authentication routes for Satta."
-      description="Keep auth concerns split by task instead of piling every flow into one screen. Each route reuses the same session provider and backend token bridge."
+      title="Choose how you want to access Satta."
+      description="Create an account, sign in, or use passwordless entry, then move straight into markets, communities, and your portfolio."
     >
       <section className="auth-grid-full">
         {routes.map((route) => (

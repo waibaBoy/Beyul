@@ -12,8 +12,8 @@ export default async function MarketRequestDetailPage({
   return (
     <AppScreenShell
       eyebrow="Market Request Detail"
-      title="Fill intake answers and move requests into the moderation queue."
-      description="This route exposes the answer set, draft state, and submission transition for a single market request."
+      title="Complete the request details before sending this market for review."
+      description="Answer the intake questions, review the request state, and move it into moderation when it is ready."
     >
       <MarketRequestDetailWorkspace requestId={requestId} />
       <ProtectedSessionCard title="Authenticated requester" />

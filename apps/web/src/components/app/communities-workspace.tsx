@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { beyulApiFetch } from "@/lib/api/beyul-api";
 import type { Community, CommunityCreateInput } from "@/lib/api/types";
+import { normalizeSlug } from "@/lib/slug";
 import { useAuth } from "@/components/auth/auth-provider";
 import { AuthFeedback } from "@/components/auth/auth-feedback";
 import { useAuthAction } from "@/components/auth/use-auth-action";
@@ -85,6 +86,7 @@ export const CommunitiesWorkspace = () => {
                   accessToken,
                   json: {
                     ...form,
+                    slug: normalizeSlug(form.slug),
                     description: form.description || undefined
                   }
                 });
@@ -113,7 +115,9 @@ export const CommunitiesWorkspace = () => {
               id="community-slug"
               placeholder="aussie-politics"
               value={form.slug}
-              onChange={(event) => setForm((current) => ({ ...current, slug: event.target.value }))}
+              onChange={(event) =>
+                setForm((current) => ({ ...current, slug: normalizeSlug(event.target.value) }))
+              }
             />
           </div>
           <div className="field">

@@ -1,6 +1,8 @@
 from uuid import UUID
 
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
+
+from app.core.slug import normalize_slug
 
 
 class CommunityResponse(BaseModel):
@@ -20,6 +22,11 @@ class CommunityCreateRequest(BaseModel):
     visibility: str = "public"
     require_post_approval: bool = True
     require_market_approval: bool = True
+
+    @field_validator("slug")
+    @classmethod
+    def validate_slug(cls, value: str) -> str:
+        return normalize_slug(value, fallback=value) or value
 
 
 class CommunityUpdateRequest(BaseModel):

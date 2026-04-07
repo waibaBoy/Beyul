@@ -6,8 +6,8 @@ export default function SignUpPage() {
   return (
     <AuthScreenShell
       eyebrow="Sign Up"
-      title="Create a reusable identity foundation before markets and feeds."
-      description="The sign-up route captures the identity fields the backend will later sync into profiles, communities, trading, and admin permissions."
+      title="Create your Satta account and get ready to trade."
+      description="Choose your email identity, username, and display name once, then use the same account across communities, markets, and portfolio."
     >
       <SignUpCard />
       <AuthSessionCard />

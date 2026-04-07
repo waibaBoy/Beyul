@@ -12,8 +12,8 @@ export default async function CommunityDetailPage({
   return (
     <AppScreenShell
       eyebrow="Community Detail"
-      title="Run the social feed and post approval flow for one community."
-      description="This route combines community metadata, membership, and the moderated post feed against the live FastAPI backend."
+      title="Follow the feed, members, and moderation flow for this community."
+      description="Stay inside one community while managing posts, approvals, and member context around its markets."
     >
       <CommunityDetailWorkspace slug={slug} />
       <ProtectedSessionCard />

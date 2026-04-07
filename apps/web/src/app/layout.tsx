@@ -1,11 +1,14 @@
 import type { Metadata } from "next";
+import { Inter } from "next/font/google";
 import { AuthProvider } from "@/components/auth/auth-provider";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import "./globals.css";
 
+const inter = Inter({ subsets: ["latin"], display: "swap" });
+
 export const metadata: Metadata = {
   title: "Satta",
-  description: "Prediction market and social settlement scaffold"
+  description: "Community-driven prediction markets with live matching, moderation, and settlement."
 };
 
 export default async function RootLayout({
@@ -15,13 +18,15 @@ export default async function RootLayout({
 }>) {
   const supabase = await createSupabaseServerClient();
   const {
-    data: { session }
-  } = await supabase.auth.getSession();
+    data: { user }
+  } = await supabase.auth.getUser();
 
   return (
-    <html lang="en">
-      <body>
-        <AuthProvider initialSession={session}>{children}</AuthProvider>
+    <html lang="en" suppressHydrationWarning>
+      <body className={inter.className} suppressHydrationWarning>
+        <AuthProvider initialAccessToken={null} initialUser={user ?? null}>
+          {children}
+        </AuthProvider>
       </body>
     </html>
   );

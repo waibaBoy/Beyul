@@ -18,7 +18,22 @@ from app.schemas.market_request import (
     MarketRequestResponse,
     MarketRequestUpdateRequest,
 )
-from app.schemas.market import MarketResponse
+from app.schemas.market import (
+    MarketDisputeCreateRequest,
+    MarketDisputeEvidenceCreateRequest,
+    MarketDisputeResponse,
+    MarketDisputeReviewRequest,
+    MarketHoldersResponse,
+    MarketResolutionStateResponse,
+    MarketResponse,
+)
+from app.schemas.market import (
+    MarketHistoryResponse,
+    MarketOrderCreateRequest,
+    MarketOrderResponse,
+    MarketStatusUpdateRequest,
+    MarketTradingShellResponse,
+)
 from app.schemas.post import PostCreateRequest, PostResponse
 from app.schemas.profile import (
     ProfileResponse,
@@ -26,6 +41,13 @@ from app.schemas.profile import (
     UserWalletResponse,
     WalletCreateRequest,
     WalletUpdateRequest,
+)
+from app.schemas.portfolio import (
+    AdminFundBalanceRequest,
+    MarketResolutionResponse,
+    MarketSettlementFinalizeRequest,
+    MarketSettlementRequestCreateRequest,
+    PortfolioSummaryResponse,
 )
 
 
@@ -189,3 +211,83 @@ class MarketRepository(Protocol):
     async def list_markets(self) -> list[MarketResponse]: ...
 
     async def get_market(self, slug: str) -> MarketResponse: ...
+
+    async def update_market_status(self, slug: str, status: str) -> MarketResponse: ...
+
+    async def get_market_resolution_state(self, slug: str) -> MarketResolutionStateResponse: ...
+
+    async def create_market_dispute(
+        self,
+        slug: str,
+        actor_id: UUID,
+        payload: MarketDisputeCreateRequest,
+    ) -> MarketDisputeResponse: ...
+
+    async def add_market_dispute_evidence(
+        self,
+        slug: str,
+        dispute_id: UUID,
+        actor_id: UUID,
+        payload: MarketDisputeEvidenceCreateRequest,
+    ) -> MarketDisputeResponse: ...
+
+    async def review_market_dispute(
+        self,
+        slug: str,
+        dispute_id: UUID,
+        payload: MarketDisputeReviewRequest,
+    ) -> MarketDisputeResponse: ...
+
+    async def request_settlement(
+        self,
+        slug: str,
+        requester_id: UUID,
+        payload: MarketSettlementRequestCreateRequest,
+    ) -> MarketResolutionResponse: ...
+
+    async def reconcile_oracle_resolution(self, slug: str) -> MarketResolutionStateResponse: ...
+
+    async def settle_market(
+        self,
+        slug: str,
+        reviewer_id: UUID,
+        payload: MarketSettlementFinalizeRequest,
+    ) -> MarketResolutionResponse: ...
+
+
+class TradingRepository(Protocol):
+    async def get_market_trading_shell(self, slug: str) -> MarketTradingShellResponse: ...
+
+    async def get_market_holders(self, slug: str, limit: int) -> MarketHoldersResponse: ...
+
+    async def get_market_history(
+        self,
+        slug: str,
+        outcome_id: UUID,
+        range_key: str,
+    ) -> MarketHistoryResponse: ...
+
+    async def list_market_orders(self, slug: str, actor_id: UUID) -> list[MarketOrderResponse]: ...
+
+    async def create_market_order(
+        self,
+        slug: str,
+        actor_id: UUID,
+        payload: MarketOrderCreateRequest,
+    ) -> MarketOrderResponse: ...
+
+    async def cancel_market_order(
+        self,
+        slug: str,
+        order_id: UUID,
+        actor_id: UUID,
+        actor_is_admin: bool,
+    ) -> MarketOrderResponse: ...
+
+    async def get_portfolio_summary(self, actor_id: UUID) -> PortfolioSummaryResponse: ...
+
+    async def fund_balance(
+        self,
+        reviewer_id: UUID,
+        payload: AdminFundBalanceRequest,
+    ) -> PortfolioSummaryResponse: ...

@@ -6,8 +6,8 @@ export default function PhoneVerifyPage() {
   return (
     <AuthScreenShell
       eyebrow="Phone Verify"
-      title="Finish passwordless phone sign-in with the OTP code."
-      description="Use this route to confirm the SMS code, establish a session, and then continue into authenticated Satta screens."
+      title="Finish signing in with the code from your phone."
+      description="Confirm the SMS code, activate your session, and continue into your account."
     >
       <PhoneVerifyCard />
       <AuthSessionCard />

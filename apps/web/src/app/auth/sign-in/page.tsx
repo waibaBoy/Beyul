@@ -6,8 +6,8 @@ export default function SignInPage() {
   return (
     <AuthScreenShell
       eyebrow="Sign In"
-      title="Access Satta with the same Supabase session the API will trust."
-      description="This route is for standard credential and Google sign-in. Once the session exists, the frontend can forward the access token directly to FastAPI."
+      title="Sign in to trade, follow markets, and manage your account."
+      description="Use the sign-in method you prefer, then continue straight into the market board, portfolio, and communities."
     >
       <SignInCard />
       <AuthSessionCard />

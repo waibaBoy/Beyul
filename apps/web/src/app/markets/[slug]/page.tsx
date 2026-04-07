@@ -9,11 +9,7 @@ export default async function MarketDetailPage({
   const { slug } = await params;
 
   return (
-    <AppScreenShell
-      eyebrow="Market Detail"
-      title="Inspect the published market and its default outcomes."
-      description="This is the first canonical market surface after a request is approved and converted."
-    >
+    <AppScreenShell>
       <MarketDetailWorkspace slug={slug} />
     </AppScreenShell>
   );

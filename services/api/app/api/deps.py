@@ -11,9 +11,12 @@ from app.services.community_service import CommunityService
 from app.services.database_service import DatabaseService
 from app.services.market_service import MarketService
 from app.services.market_request_service import MarketRequestService
+from app.services.oracle_service import OracleService
 from app.services.post_service import PostService
+from app.services.portfolio_service import PortfolioService
 from app.services.profile_service import ProfileService
 from app.services.supabase_auth_service import SupabaseAuthService
+from app.services.trading_service import TradingService
 
 
 async def get_current_actor(
@@ -67,6 +70,18 @@ def get_admin_service() -> AdminService:
     return container.admin_service
 
 
+def get_trading_service() -> TradingService:
+    return container.trading_service
+
+
+def get_portfolio_service() -> PortfolioService:
+    return container.portfolio_service
+
+
+def get_oracle_service() -> OracleService:
+    return container.oracle_service
+
+
 def get_database_service() -> DatabaseService:
     return container.database_service
 
@@ -77,3 +92,13 @@ def get_actor_service() -> ActorService:
 
 def get_supabase_auth_service() -> SupabaseAuthService:
     return container.supabase_auth_service
+
+
+def require_oracle_secret(
+    x_satta_oracle_secret: str | None = Header(default=None),
+) -> None:
+    if not settings.oracle_callback_secret or x_satta_oracle_secret != settings.oracle_callback_secret:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Oracle callback authentication failed.",
+        )

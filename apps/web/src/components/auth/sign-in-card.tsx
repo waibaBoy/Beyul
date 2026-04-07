@@ -15,8 +15,8 @@ export const SignInCard = () => {
 
   return (
     <section className="auth-section">
-      <h2>Sign in</h2>
-      <p>Use the same Supabase session for frontend rendering and backend bearer-token requests.</p>
+      <h2>Welcome back</h2>
+      <p>Use email or Google to get back to your markets, communities, and portfolio.</p>
 
       <form
         className="auth-form"
@@ -51,7 +51,7 @@ export const SignInCard = () => {
         </div>
         <div className="button-row">
           <button className="button-primary" disabled={isSubmitting} type="submit">
-            Email sign in
+            Sign in with email
           </button>
           <button
             className="button-secondary"

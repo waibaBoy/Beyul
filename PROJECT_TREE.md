@@ -3,7 +3,6 @@
 ```text
 Beyul/
 |-- .editorconfig
-|-- .env.example
 |-- .gitignore
 |-- README.md
 |-- package.json
@@ -11,17 +10,16 @@ Beyul/
 |-- PROJECT_TREE.md
 |-- apps/
 |   `-- web/
-|       |-- .env.example
 |       |-- README.md
 |       |-- next-env.d.ts
 |       |-- next.config.mjs
 |       |-- package.json
 |       |-- public/
 |       |-- src/
-|       |   `-- app/
-|       |       |-- globals.css
-|       |       |-- layout.tsx
-|       |       `-- page.tsx
+|       |   |-- app/                 # App Router: /, /markets, /portfolio, /auth/*, /communities, /market-requests, /admin
+|       |   |-- components/          # app/* workspaces, auth/*
+|       |   |-- lib/                 # api client, markets, supabase, realtime
+|       |   `-- middleware.ts
 |       `-- tsconfig.json
 |-- contracts/
 |   `-- polygon/
@@ -36,8 +34,11 @@ Beyul/
 |           `-- BeyulMarket.t.sol
 |-- docs/
 |   |-- architecture.md
+|   |-- competitive-notes-polymarket-kalshi.md
 |   |-- database-schema.md
 |   |-- domain-rules.md
+|   |-- domain-rules-parity.md
+|   |-- phase-execution-roadmap.md
 |   |-- supabase-project-setup.md
 |   `-- rls-policy-plan.md
 |-- infra/
@@ -46,30 +47,27 @@ Beyul/
 |   `-- docker/
 |       `-- docker-compose.local.yml
 |-- scripts/
-|   `-- README.md
+|   |-- README.md
+|   |-- scheduler/
+|   |   `-- rolling-settlement-loop.ps1
+|   `-- supabase/
+|       |-- README.md
+|       |-- 010_legal_acceptances_standalone.sql
+|       |-- 011_notifications_standalone.sql
+|       `-- 012_creator_reward_tiers_standalone.sql
 |-- services/
 |   |-- api/
-|   |   |-- .env.example
 |   |   |-- README.md
 |   |   |-- app/
 |   |   |   |-- __init__.py
-|   |   |   |-- api/
-|   |   |   |   |-- __init__.py
-|   |   |   |   `-- routes/
-|   |   |   |       |-- __init__.py
-|   |   |   |       `-- health.py
-|   |   |   |-- core/
-|   |   |   |   |-- __init__.py
-|   |   |   |   `-- config.py
-|   |   |   |-- db/
-|   |   |   |   `-- __init__.py
+|   |   |   |-- api/            # router, routes (auth, markets, portfolio, communities, posts, market_requests, admin, health)
+|   |   |   |-- core/           # config (env + production validators), container, slug, exceptions
+|   |   |   |-- db/             # SQLAlchemy session, tables
 |   |   |   |-- main.py
 |   |   |   |-- models/
-|   |   |   |   `-- __init__.py
+|   |   |   |-- repositories/   # memory + postgres
 |   |   |   |-- schemas/
-|   |   |   |   `-- __init__.py
 |   |   |   `-- services/
-|   |   |       `-- __init__.py
 |   |   |-- pyproject.toml
 |   |   `-- tests/
 |   |       |-- __init__.py
@@ -111,16 +109,21 @@ Beyul/
     |   |-- 004_resolution_and_disputes.sql
     |   |-- 005_ledger_and_payments.sql
     |   |-- 006_seed_reference_data.sql
-    |   `-- 007_rls_policies.sql
+    |   |-- 007_rls_policies.sql
+    |   |-- 008_market_image_url.sql
+    |   |-- 009_market_request_image_url.sql
+    |   |-- 010_legal_acceptances.sql
+    |   |-- 011_notifications.sql
+    |   `-- 012_creator_reward_tiers.sql
     |-- schema.sql
     `-- seed.sql
 ```
 
 ## Notes
 
-- `apps/web` is the Next.js frontend scaffold.
-- `services/api` is the FastAPI service boundary.
+- `apps/web` is the Next.js App Router frontend (markets, portfolio, auth, communities, market requests).
+- `services/api` is FastAPI with pluggable repositories (`memory` for local, `postgres` for real data); set `APP_ENV` to `production`/`staging` only with hardened env (see `app/core/config.py`).
 - `services/realtime` is the Rust workspace for engine, feed, and websocket services.
 - `contracts/polygon` is the Polygon/Foundry contract scaffold.
-- `supabase` contains the first-pass PostgreSQL schema and seed data.
-- `docs/domain-rules.md`, `docs/rls-policy-plan.md`, and `docs/supabase-project-setup.md` define product defaults, access control, and project connection prep.
+- `supabase` holds ordered migrations (`001`–`012`); apply through `012` for `creator_reward_tiers` and prior schema before running the API against Postgres.
+- `docs/domain-rules.md` and `docs/domain-rules-parity.md` tie product rules to the current surface area; `docs/rls-policy-plan.md` and `docs/supabase-project-setup.md` cover access control and project setup.

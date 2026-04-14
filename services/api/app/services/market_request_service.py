@@ -1,7 +1,11 @@
+from __future__ import annotations
+
+import logging
+from typing import TYPE_CHECKING
 from uuid import UUID
 
 from app.core.actor import CurrentActor
-from app.core.exceptions import ForbiddenError
+from app.core.exceptions import ConflictError, ForbiddenError
 from app.repositories.base import MarketRequestRepository
 from app.schemas.market_request import (
     MarketRequestAnswerResponse,
@@ -11,10 +15,20 @@ from app.schemas.market_request import (
     MarketRequestUpdateRequest,
 )
 
+if TYPE_CHECKING:
+    from app.services.market_quality_service import MarketQualityService
+
+logger = logging.getLogger(__name__)
+
 
 class MarketRequestService:
-    def __init__(self, repository: MarketRequestRepository) -> None:
+    def __init__(
+        self,
+        repository: MarketRequestRepository,
+        quality_service: MarketQualityService | None = None,
+    ) -> None:
         self._repository = repository
+        self._quality = quality_service
 
     async def list_my_requests(self, actor: CurrentActor) -> list[MarketRequestResponse]:
         return await self._repository.list_requests(actor.id)
@@ -24,6 +38,13 @@ class MarketRequestService:
         actor: CurrentActor,
         payload: MarketRequestCreateRequest,
     ) -> MarketRequestResponse:
+        if self._quality:
+            report = await self._quality.check_proposal(actor.id, payload)
+            if report.blocked:
+                raise ConflictError(report.block_reason or "Request blocked by quality controls.")
+            if report.has_errors:
+                error_messages = [w.message for w in report.warnings if w.severity == "error"]
+                raise ConflictError(f"Quality check failed: {'; '.join(error_messages)}")
         return await self._repository.create_request(actor.id, payload)
 
     async def get_request(self, actor: CurrentActor, request_id: UUID) -> MarketRequestResponse:

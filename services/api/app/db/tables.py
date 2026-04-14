@@ -237,6 +237,25 @@ profiles = Table(
     Column("updated_at", DateTime(timezone=True), nullable=False),
 )
 
+legal_acceptances = Table(
+    "legal_acceptances",
+    metadata,
+    Column("id", UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")),
+    Column("profile_id", UUID(as_uuid=True), ForeignKey("public.profiles.id", ondelete="CASCADE"), nullable=False),
+    Column("acceptance_type", Text, nullable=False),
+    Column("document_version", Text, nullable=False),
+    Column("accepted_at", DateTime(timezone=True), nullable=False),
+    Column("source", Text, nullable=False),
+    Column("client_asserted_at", DateTime(timezone=True)),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    UniqueConstraint(
+        "profile_id",
+        "acceptance_type",
+        "document_version",
+        name="legal_acceptances_profile_type_version_key",
+    ),
+)
+
 user_wallets = Table(
     "user_wallets",
     metadata,
@@ -305,6 +324,7 @@ market_creation_requests = Table(
     Column("slug", String),
     Column("question", Text, nullable=False),
     Column("description", Text),
+    Column("image_url", Text),
     Column("market_access_mode", market_access_mode_enum, nullable=False),
     Column("requested_rail", rail_type_enum),
     Column("settlement_source_id", UUID(as_uuid=True)),
@@ -353,6 +373,7 @@ markets = Table(
     Column("title", Text, nullable=False),
     Column("question", Text, nullable=False),
     Column("description", Text),
+    Column("image_url", Text),
     Column("rules_text", Text, nullable=False),
     Column("market_access_mode", market_access_mode_enum, nullable=False),
     Column("rail_mode", rail_type_enum, nullable=False),
@@ -560,6 +581,22 @@ ledger_transactions = Table(
     Column("created_at", DateTime(timezone=True), nullable=False),
 )
 
+notifications = Table(
+    "notifications",
+    metadata,
+    Column("id", UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")),
+    Column("profile_id", UUID(as_uuid=True), ForeignKey("public.profiles.id", ondelete="CASCADE"), nullable=False),
+    Column("kind", Text, nullable=False),
+    Column("title", Text, nullable=False),
+    Column("body", Text),
+    Column("market_slug", Text),
+    Column("market_id", UUID(as_uuid=True), ForeignKey("public.markets.id", ondelete="SET NULL")),
+    Column("order_id", UUID(as_uuid=True), ForeignKey("public.orders.id", ondelete="SET NULL")),
+    Column("payload", JSONB, nullable=False, server_default=text("'{}'::jsonb")),
+    Column("is_read", Boolean, nullable=False, server_default=text("false")),
+    Column("created_at", DateTime(timezone=True), nullable=False, server_default=text("timezone('utc', now())")),
+)
+
 ledger_entries = Table(
     "ledger_entries",
     metadata,
@@ -570,4 +607,79 @@ ledger_entries = Table(
     Column("amount", Numeric(20, 8), nullable=False),
     Column("metadata", JSONB, nullable=False),
     Column("created_at", DateTime(timezone=True), nullable=False),
+)
+
+follows = Table(
+    "follows",
+    metadata,
+    Column("id", UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")),
+    Column("follower_id", UUID(as_uuid=True), ForeignKey("public.profiles.id"), nullable=False),
+    Column("following_id", UUID(as_uuid=True), ForeignKey("public.profiles.id"), nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False, server_default=text("timezone('utc', now())")),
+)
+
+transfer_direction_enum = ENUM(
+    "deposit",
+    "withdrawal",
+    name="transfer_direction",
+    schema="public",
+    create_type=False,
+)
+
+transfer_status_enum = ENUM(
+    "pending",
+    "processing",
+    "completed",
+    "failed",
+    "cancelled",
+    name="transfer_status",
+    schema="public",
+    create_type=False,
+)
+
+transfer_rail_enum = ENUM(
+    "crypto",
+    "fiat_bank",
+    "fiat_card",
+    name="transfer_rail",
+    schema="public",
+    create_type=False,
+)
+
+transfer_requests = Table(
+    "transfer_requests",
+    metadata,
+    Column("id", UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")),
+    Column("profile_id", UUID(as_uuid=True), ForeignKey("public.profiles.id"), nullable=False),
+    Column("direction", transfer_direction_enum, nullable=False),
+    Column("rail", transfer_rail_enum, nullable=False),
+    Column("asset_code", Text, nullable=False),
+    Column("amount", Numeric(20, 8), nullable=False),
+    Column("fee_amount", Numeric(20, 8), nullable=False),
+    Column("net_amount", Numeric(20, 8), nullable=False),
+    Column("status", transfer_status_enum, nullable=False),
+    Column("external_reference", Text),
+    Column("wallet_address", Text),
+    Column("bank_reference", Text),
+    Column("failure_reason", Text),
+    Column("metadata", JSONB, nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False, server_default=text("timezone('utc', now())")),
+    Column("updated_at", DateTime(timezone=True), nullable=False, server_default=text("timezone('utc', now())")),
+    Column("completed_at", DateTime(timezone=True)),
+)
+
+api_keys = Table(
+    "api_keys",
+    metadata,
+    Column("id", UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")),
+    Column("profile_id", UUID(as_uuid=True), ForeignKey("public.profiles.id"), nullable=False),
+    Column("label", Text, nullable=False),
+    Column("key_hash", Text, nullable=False),
+    Column("key_prefix", Text, nullable=False),
+    Column("permissions", JSONB, nullable=False),
+    Column("is_active", Boolean, nullable=False, server_default=text("true")),
+    Column("last_used_at", DateTime(timezone=True)),
+    Column("expires_at", DateTime(timezone=True)),
+    Column("created_at", DateTime(timezone=True), nullable=False, server_default=text("timezone('utc', now())")),
+    Column("revoked_at", DateTime(timezone=True)),
 )

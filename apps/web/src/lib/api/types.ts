@@ -44,6 +44,7 @@ export type MarketRequest = {
   slug: string | null;
   question: string;
   description: string | null;
+  image_url: string | null;
   template_key: string | null;
   template_config: MarketTemplateConfig | null;
   market_access_mode: "public" | "private_group";
@@ -63,6 +64,7 @@ export type MarketRequestCreateInput = {
   slug?: string;
   question: string;
   description?: string;
+  image_url?: string;
   template_key?: MarketTemplateKey;
   template_config?: MarketTemplateConfig;
   market_access_mode: "public" | "private_group";
@@ -71,6 +73,7 @@ export type MarketRequestCreateInput = {
   community_id?: string;
   settlement_source_id?: string;
   settlement_reference_url?: string;
+  custom_outcomes?: string[];
 };
 
 export type MarketTemplateKey = "price_above" | "price_below" | "up_down_interval" | "event_outcome";
@@ -418,6 +421,7 @@ export type MarketTrade = {
   price: string;
   quantity: string;
   gross_notional: string;
+  fee_amount: string;
   executed_at: string;
 };
 
@@ -446,6 +450,15 @@ export type MarketTradingShell = {
   quotes: MarketQuote[];
   order_books: MarketOrderBook[];
   recent_trades: MarketTrade[];
+};
+
+export type MarketDetailBootstrap = {
+  shell: MarketTradingShell;
+  holders: MarketHolders | null;
+  resolution_state: MarketResolutionState | null;
+  backend_user: BackendUser | null;
+  my_orders: MarketOrder[];
+  portfolio: PortfolioSummary | null;
 };
 
 export type MarketHistoryRangeKey = "1M" | "5M" | "30M" | "1H" | "1D" | "1W";
@@ -499,6 +512,7 @@ export type Market = {
   created_from_request_id: string | null;
   creator_id: string;
   settlement_source_id: string;
+  image_url: string | null;
   settlement_reference_url: string | null;
   settlement_reference_label: string | null;
   settlement_source: MarketSettlementSource | null;
@@ -526,3 +540,112 @@ export type MarketLiveEvent = {
 };
 
 export type MarketLiveConnectionState = "idle" | "connecting" | "reconnecting" | "connected" | "disconnected";
+
+export type NotificationKind =
+  | "order_filled"
+  | "order_cancelled"
+  | "order_rejected"
+  | "market_opened"
+  | "market_settled"
+  | "market_cancelled"
+  | "market_disputed"
+  | "settlement_requested"
+  | "settlement_finalized"
+  | "price_alert"
+  | "system";
+
+export type Notification = {
+  id: string;
+  profile_id: string;
+  kind: NotificationKind;
+  title: string;
+  body: string | null;
+  market_slug: string | null;
+  market_id: string | null;
+  order_id: string | null;
+  payload: Record<string, unknown>;
+  is_read: boolean;
+  created_at: string;
+};
+
+export type NotificationListResponse = {
+  items: Notification[];
+  total_count: number;
+  unread_count: number;
+};
+
+export type NotificationUnreadCount = {
+  unread_count: number;
+};
+
+export type NotificationMarkReadInput = {
+  notification_ids?: string[];
+  mark_all?: boolean;
+};
+
+export type QualityWarning = {
+  code: string;
+  severity: string;
+  message: string;
+  details: Record<string, unknown>;
+};
+
+export type DuplicateMatch = {
+  source: string;
+  slug: string | null;
+  title: string;
+  status: string;
+  match_type: string;
+  similarity: number | null;
+};
+
+export type QualityCheckResponse = {
+  blocked: boolean;
+  block_reason: string | null;
+  warnings: QualityWarning[];
+  duplicate_matches: DuplicateMatch[];
+};
+
+export type CreatorRewardTier = {
+  tier_code: string;
+  tier_label: string;
+  min_volume_usd: string;
+  fee_share_bps: number;
+  badge_color: string;
+  sort_order: number;
+};
+
+export type CreatorStats = {
+  profile_id: string;
+  username: string | null;
+  display_name: string | null;
+  markets_created: number;
+  markets_open: number;
+  markets_settled: number;
+  total_volume: string;
+  total_trades: number;
+  current_tier: CreatorRewardTier;
+  next_tier: CreatorRewardTier | null;
+  volume_to_next_tier: string;
+  progress_pct: number;
+};
+
+export type CreatorTiersResponse = {
+  tiers: CreatorRewardTier[];
+};
+
+export type CreatorLeaderboardEntry = {
+  profile_id: string;
+  username: string | null;
+  display_name: string;
+  markets_created: number;
+  total_volume: string;
+  total_trades: number;
+  tier_code: string;
+  tier_label: string;
+  badge_color: string;
+};
+
+export type CreatorLeaderboardResponse = {
+  entries: CreatorLeaderboardEntry[];
+};

@@ -12,6 +12,7 @@ from app.core.actor import CurrentActor
 from app.core.config import settings
 from app.db.session import SessionLocal
 from app.db.tables import profiles
+from app.services.signup_compliance_service import record_signup_compliance_from_metadata
 
 
 @dataclass
@@ -86,7 +87,9 @@ class ActorService:
             display_name=base_display_name,
             is_admin=self._is_admin_user(claims),
         )
-        return await self._provision_actor(actor_input)
+        actor = await self._provision_actor(actor_input)
+        await record_signup_compliance_from_metadata(actor.id, user_metadata)
+        return actor
 
     async def _provision_actor(self, actor_input: ActorProvisioningInput) -> CurrentActor:
         username_candidates = self._candidate_usernames(actor_input)

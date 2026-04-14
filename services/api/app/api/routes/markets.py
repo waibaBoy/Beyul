@@ -1,8 +1,10 @@
+import asyncio
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 
-from app.api.deps import CurrentActor, get_current_actor, get_market_service, get_trading_service, require_oracle_secret
+from app.api.deps import CurrentActor, get_current_actor, get_market_service, get_notification_service, get_trading_service, require_oracle_secret
+from app.core.container import container
 from app.core.exceptions import ConflictError, ForbiddenError, NotFoundError, ServiceUnavailableError
 from app.schemas.market import (
     MarketDisputeCreateRequest,
@@ -18,8 +20,11 @@ from app.schemas.market import (
     MarketStatusUpdateRequest,
     MarketTradingShellResponse,
 )
+from app.schemas.market_bootstrap import MarketDetailBootstrapResponse
 from app.schemas.portfolio import MarketResolutionResponse, MarketSettlementFinalizeRequest, MarketSettlementRequestCreateRequest
 from app.services.market_service import MarketService
+from app.services.notification_emitter import emit_market_status_change, emit_settlement_finalized
+from app.services.notification_service import NotificationService
 from app.services.trading_service import TradingService
 
 router = APIRouter(prefix="/markets", tags=["markets"])
@@ -41,6 +46,50 @@ async def get_market_trading_shell(
         return await service.get_market_trading_shell(market_slug)
     except NotFoundError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Market not found")
+
+
+@router.get("/{market_slug}/bootstrap", response_model=MarketDetailBootstrapResponse)
+async def get_market_bootstrap(
+    market_slug: str,
+    authorization: str | None = Header(default=None),
+    trading_service: TradingService = Depends(get_trading_service),
+    market_service: MarketService = Depends(get_market_service),
+) -> MarketDetailBootstrapResponse:
+    try:
+        shell_task = trading_service.get_market_trading_shell(market_slug)
+        holders_task = trading_service.get_market_holders(market_slug, limit=12)
+        resolution_task = market_service.get_market_resolution_state(market_slug)
+        shell, holders, resolution_state = await asyncio.gather(shell_task, holders_task, resolution_task)
+
+        backend_user = None
+        my_orders = []
+        portfolio = None
+        if authorization:
+            claims = await container.supabase_auth_service.verify_bearer_token(authorization)
+            actor = await container.actor_service.resolve_authenticated_actor(claims)
+            backend_user = {
+                "id": actor.id,
+                "username": actor.username,
+                "display_name": actor.display_name,
+                "is_admin": actor.is_admin,
+            }
+            my_orders, portfolio = await asyncio.gather(
+                trading_service.list_market_orders(actor, market_slug),
+                trading_service.get_portfolio_summary(actor),
+            )
+
+        return MarketDetailBootstrapResponse(
+            shell=shell,
+            holders=holders,
+            resolution_state=resolution_state,
+            backend_user=backend_user,
+            my_orders=my_orders,
+            portfolio=portfolio,
+        )
+    except NotFoundError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Market not found")
+    except (ConflictError, ForbiddenError) as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
 
 
 @router.get("/{market_slug}/holders", response_model=MarketHoldersResponse)
@@ -189,9 +238,18 @@ async def update_market_status(
     payload: MarketStatusUpdateRequest,
     actor: CurrentActor = Depends(get_current_actor),
     service: MarketService = Depends(get_market_service),
+    trading_service: TradingService = Depends(get_trading_service),
+    notification_service: NotificationService = Depends(get_notification_service),
 ) -> MarketResponse:
     try:
-        return await service.update_market_status(actor, market_slug, payload.status)
+        result = await service.update_market_status(actor, market_slug, payload.status)
+        holders = None
+        try:
+            holders = await trading_service.get_market_holders(market_slug, limit=500)
+        except Exception:
+            pass
+        await emit_market_status_change(notification_service, holders, market_slug, payload.status)
+        return result
     except NotFoundError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Market not found")
     except ForbiddenError as exc:
@@ -237,9 +295,18 @@ async def finalize_market_settlement(
     market_slug: str,
     payload: MarketSettlementFinalizeRequest,
     service: MarketService = Depends(get_market_service),
+    trading_service: TradingService = Depends(get_trading_service),
+    notification_service: NotificationService = Depends(get_notification_service),
 ) -> MarketResolutionResponse:
     try:
-        return await service.finalize_oracle_settlement(market_slug, payload)
+        result = await service.finalize_oracle_settlement(market_slug, payload)
+        holders = None
+        try:
+            holders = await trading_service.get_market_holders(market_slug, limit=500)
+        except Exception:
+            pass
+        await emit_settlement_finalized(notification_service, holders, market_slug)
+        return result
     except NotFoundError as exc:
         detail = "Winning outcome not found" if "outcome" in str(exc).lower() else "Market not found"
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=detail)

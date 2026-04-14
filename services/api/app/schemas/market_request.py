@@ -1,4 +1,5 @@
 from datetime import datetime
+from urllib.parse import urlparse
 from uuid import UUID
 
 from pydantic import BaseModel, field_validator
@@ -33,6 +34,7 @@ class MarketRequestResponse(BaseModel):
     slug: str | None = None
     question: str
     description: str | None = None
+    image_url: str | None = None
     template_key: str | None = None
     template_config: MarketTemplateConfigResponse | None = None
     market_access_mode: str
@@ -52,6 +54,7 @@ class MarketRequestCreateRequest(BaseModel):
     slug: str | None = None
     question: str
     description: str | None = None
+    image_url: str | None = None
     template_key: str | None = None
     template_config: MarketTemplateConfigResponse | None = None
     market_access_mode: str
@@ -60,18 +63,50 @@ class MarketRequestCreateRequest(BaseModel):
     community_id: UUID | None = None
     settlement_source_id: UUID | None = None
     settlement_reference_url: str | None = None
+    custom_outcomes: list[str] | None = None
 
     @field_validator("slug")
     @classmethod
     def validate_slug(cls, value: str | None) -> str | None:
         return normalize_slug(value)
 
+    @field_validator("image_url")
+    @classmethod
+    def validate_image_url(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        if not normalized:
+            return None
+        if len(normalized) > 2048:
+            raise ValueError("image_url is too long")
+        parsed = urlparse(normalized)
+        if parsed.scheme not in {"https", "http"} or not parsed.netloc:
+            raise ValueError("image_url must be a valid http/https URL")
+        return normalized
+
 
 class MarketRequestUpdateRequest(BaseModel):
     title: str | None = None
     question: str | None = None
     description: str | None = None
+    image_url: str | None = None
     settlement_reference_url: str | None = None
+
+    @field_validator("image_url")
+    @classmethod
+    def validate_image_url(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        if not normalized:
+            return None
+        if len(normalized) > 2048:
+            raise ValueError("image_url is too long")
+        parsed = urlparse(normalized)
+        if parsed.scheme not in {"https", "http"} or not parsed.netloc:
+            raise ValueError("image_url must be a valid http/https URL")
+        return normalized
 
 
 class MarketRequestAnswerUpsertRequest(BaseModel):

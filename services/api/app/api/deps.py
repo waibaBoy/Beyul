@@ -16,6 +16,9 @@ from app.services.post_service import PostService
 from app.services.portfolio_service import PortfolioService
 from app.services.profile_service import ProfileService
 from app.services.supabase_auth_service import SupabaseAuthService
+from app.services.creator_service import CreatorService
+from app.services.market_quality_service import MarketQualityService
+from app.services.notification_service import NotificationService
 from app.services.trading_service import TradingService
 
 
@@ -92,6 +95,33 @@ def get_actor_service() -> ActorService:
 
 def get_supabase_auth_service() -> SupabaseAuthService:
     return container.supabase_auth_service
+
+
+def get_notification_service() -> NotificationService:
+    return container.notification_service
+
+
+def get_creator_service() -> CreatorService:
+    return container.creator_service
+
+
+def get_market_quality_service() -> MarketQualityService:
+    return container.market_quality_service
+
+
+def get_fee_service():
+    from app.services.fee_service import FeeService
+    return container.fee_service
+
+
+def get_depth_kpi_service():
+    from app.services.depth_kpi_service import DepthKpiService
+    return container.depth_kpi_service
+
+
+def get_amm_service():
+    from app.services.amm_service import AmmService
+    return container.amm_service
 
 
 def require_oracle_secret(

@@ -6,7 +6,7 @@ import { AuthFeedback } from "@/components/auth/auth-feedback";
 import { useAuth } from "@/components/auth/auth-provider";
 import { useAuthAction } from "@/components/auth/use-auth-action";
 import { beyulApiFetch } from "@/lib/api/beyul-api";
-import type { AdminFundBalanceInput, BackendUser, PortfolioPosition, PortfolioSummary } from "@/lib/api/types";
+import type { AdminFundBalanceInput, BackendUser, MarketTrade, PortfolioPosition, PortfolioSummary } from "@/lib/api/types";
 
 /* ── Formatters ──────────────────────────────────────────── */
 const fmt = (v: string | number | null, decimals = 2) => {
@@ -112,6 +112,8 @@ export const PortfolioWorkspace = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<Tab>("positions");
   const [hoveredPoint, setHoveredPoint] = useState<ChartPoint | null>(null);
+  const [expandedPositions, setExpandedPositions] = useState<Set<string>>(new Set());
+  const [isExporting, setIsExporting] = useState(false);
   const [fundForm, setFundForm] = useState<AdminFundBalanceInput>({
     profile_id: "",
     asset_code: "USDC",
@@ -168,6 +170,42 @@ export const PortfolioWorkspace = () => {
     { id: "trades", label: "Trade history", count: portfolio?.recent_trades.length ?? 0 }
   ];
 
+  const totalFees = useMemo(() => {
+    if (!portfolio) return 0;
+    return portfolio.recent_trades.reduce((s, t) => s + Number(t.fee_amount ?? 0), 0);
+  }, [portfolio]);
+
+  const togglePosition = (key: string) => {
+    setExpandedPositions((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  };
+
+  const tradesForPosition = (pos: PortfolioPosition) =>
+    (portfolio?.recent_trades ?? []).filter((t) => t.outcome_id === pos.outcome_id);
+
+  const downloadCsv = async () => {
+    setIsExporting(true);
+    try {
+      const accessToken = await getAccessToken();
+      const res = await fetch(`${process.env.NEXT_PUBLIC_BEYUL_API_URL ?? "http://127.0.0.1:8000"}/api/v1/portfolio/me/export.csv`, {
+        headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : {},
+      });
+      if (!res.ok) throw new Error("Export failed");
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `portfolio_${new Date().toISOString().slice(0, 10)}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
   if (!session && !isLoading) {
     return (
       <div className="pf-signin-prompt">
@@ -218,8 +256,19 @@ export const PortfolioWorkspace = () => {
               <strong className="pf-stat-value">{summary.openPositions}</strong>
               <span className="pf-stat-sub">{portfolio?.open_orders.length ?? 0} resting orders</span>
             </div>
+            <div className="pf-stat-card">
+              <span className="pf-stat-label">Total fees paid</span>
+              <strong className="pf-stat-value">{fmt(totalFees)}</strong>
+              <span className="pf-stat-sub">{portfolio?.recent_trades.length ?? 0} trades</span>
+            </div>
           </>
         ) : null}
+      </div>
+
+      <div className="pf-export-bar">
+        <button type="button" className="pf-export-btn" onClick={downloadCsv} disabled={isExporting || isLoading}>
+          {isExporting ? "Exporting…" : "Download CSV"}
+        </button>
       </div>
 
       {/* ── PnL chart ───────────────────────────────────── */}
@@ -413,6 +462,7 @@ export const PortfolioWorkspace = () => {
               <table className="pf-table">
                 <thead>
                   <tr>
+                    <th></th>
                     <th>Market</th>
                     <th>Position</th>
                     <th className="pf-th-num">Qty</th>
@@ -424,35 +474,21 @@ export const PortfolioWorkspace = () => {
                   </tr>
                 </thead>
                 <tbody>
-                  {portfolio!.positions.map((pos) => (
-                    <tr key={`${pos.market_id}-${pos.outcome_id}`} className="pf-table-row">
-                      <td className="pf-td-market">
-                        <Link href={`/markets/${pos.market_slug}`} className="pf-market-link">
-                          {pos.market_title}
-                        </Link>
-                        <span className="pf-td-date">{fmtTime(pos.last_trade_at)}</span>
-                      </td>
-                      <td>
-                        <span className={`pf-side-badge ${Number(pos.quantity) >= 0 ? "pf-side-long" : "pf-side-short"}`}>
-                          {positionLabel(pos.quantity, pos.outcome_label)}
-                        </span>
-                      </td>
-                      <td className="pf-td-num">{fmt(pos.quantity, 0)}</td>
-                      <td className="pf-td-num">{fmtPrice(pos.average_entry_price)}</td>
-                      <td className="pf-td-num">{fmt(pos.net_cost)}</td>
-                      <td className={`pf-td-num pf-td-pnl ${pnlClass(pos.realized_pnl)}`}>
-                        {fmtPnl(pos.realized_pnl)}
-                      </td>
-                      <td className={`pf-td-num pf-td-pnl ${pnlClass(pos.unrealized_pnl)}`}>
-                        {pos.market_status === "settled" ? "—" : fmtPnl(pos.unrealized_pnl)}
-                      </td>
-                      <td>
-                        <span className={`pf-status-chip pf-status-${pos.market_status.replace(/_/g, "-")}`}>
-                          {statusLabel(pos.market_status, pos.quantity)}
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
+                  {portfolio!.positions.map((pos) => {
+                    const rowKey = `${pos.market_id}-${pos.outcome_id}`;
+                    const isExpanded = expandedPositions.has(rowKey);
+                    const trades = tradesForPosition(pos);
+                    return (
+                      <PositionRow
+                        key={rowKey}
+                        pos={pos}
+                        rowKey={rowKey}
+                        isExpanded={isExpanded}
+                        trades={trades}
+                        onToggle={() => togglePosition(rowKey)}
+                      />
+                    );
+                  })}
                 </tbody>
               </table>
             )}
@@ -526,6 +562,7 @@ export const PortfolioWorkspace = () => {
                     <th className="pf-th-num">Price</th>
                     <th className="pf-th-num">Qty</th>
                     <th className="pf-th-num">Gross notional</th>
+                    <th className="pf-th-num">Fee</th>
                     <th>Time</th>
                   </tr>
                 </thead>
@@ -538,6 +575,7 @@ export const PortfolioWorkspace = () => {
                       <td className="pf-td-num">{fmtPrice(trade.price)}</td>
                       <td className="pf-td-num">{fmt(trade.quantity, 0)}</td>
                       <td className="pf-td-num">{fmt(trade.gross_notional)}</td>
+                      <td className="pf-td-num">{fmt(trade.fee_amount)}</td>
                       <td className="pf-td-date-cell">
                         {trade.executed_at
                           ? new Date(trade.executed_at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit", second: "2-digit" })
@@ -621,3 +659,79 @@ export const PortfolioWorkspace = () => {
     </div>
   );
 };
+
+/* ── Expandable position row ──────────────────────────── */
+const PositionRow = ({
+  pos,
+  rowKey,
+  isExpanded,
+  trades,
+  onToggle,
+}: {
+  pos: PortfolioPosition;
+  rowKey: string;
+  isExpanded: boolean;
+  trades: MarketTrade[];
+  onToggle: () => void;
+}) => (
+  <>
+    <tr className={`pf-table-row ${isExpanded ? "pf-row-expanded" : ""}`} onClick={onToggle} style={{ cursor: "pointer" }}>
+      <td className="pf-td-expand">{trades.length > 0 ? (isExpanded ? "▾" : "▸") : ""}</td>
+      <td className="pf-td-market">
+        <Link href={`/markets/${pos.market_slug}`} className="pf-market-link" onClick={(e) => e.stopPropagation()}>
+          {pos.market_title}
+        </Link>
+        <span className="pf-td-date">{fmtTime(pos.last_trade_at)}</span>
+      </td>
+      <td>
+        <span className={`pf-side-badge ${Number(pos.quantity) >= 0 ? "pf-side-long" : "pf-side-short"}`}>
+          {positionLabel(pos.quantity, pos.outcome_label)}
+        </span>
+      </td>
+      <td className="pf-td-num">{fmt(pos.quantity, 0)}</td>
+      <td className="pf-td-num">{fmtPrice(pos.average_entry_price)}</td>
+      <td className="pf-td-num">{fmt(pos.net_cost)}</td>
+      <td className={`pf-td-num pf-td-pnl ${pnlClass(pos.realized_pnl)}`}>{fmtPnl(pos.realized_pnl)}</td>
+      <td className={`pf-td-num pf-td-pnl ${pnlClass(pos.unrealized_pnl)}`}>
+        {pos.market_status === "settled" ? "—" : fmtPnl(pos.unrealized_pnl)}
+      </td>
+      <td>
+        <span className={`pf-status-chip pf-status-${pos.market_status.replace(/_/g, "-")}`}>
+          {statusLabel(pos.market_status, pos.quantity)}
+        </span>
+      </td>
+    </tr>
+    {isExpanded && trades.length > 0 ? (
+      <tr className="pf-drilldown-row">
+        <td colSpan={9}>
+          <div className="pf-drilldown-inner">
+            <table className="pf-drilldown-table">
+              <thead>
+                <tr>
+                  <th>Time</th>
+                  <th className="pf-th-num">Price</th>
+                  <th className="pf-th-num">Qty</th>
+                  <th className="pf-th-num">Notional</th>
+                  <th className="pf-th-num">Fee</th>
+                </tr>
+              </thead>
+              <tbody>
+                {trades.map((t) => (
+                  <tr key={t.id}>
+                    <td className="pf-td-date-cell">
+                      {t.executed_at ? new Date(t.executed_at).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "—"}
+                    </td>
+                    <td className="pf-td-num">{fmtPrice(t.price)}</td>
+                    <td className="pf-td-num">{fmt(t.quantity, 0)}</td>
+                    <td className="pf-td-num">{fmt(t.gross_notional)}</td>
+                    <td className="pf-td-num">{fmt(t.fee_amount)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </td>
+      </tr>
+    ) : null}
+  </>
+);

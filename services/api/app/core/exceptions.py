@@ -16,3 +16,7 @@ class ForbiddenError(AppError):
 
 class ServiceUnavailableError(AppError):
     """Raised when a required internal dependency is unavailable."""
+
+
+class ValidationError(AppError):
+    """Raised when input fails domain validation."""

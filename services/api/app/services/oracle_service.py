@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from hashlib import sha256
@@ -12,6 +13,8 @@ from eth_utils import keccak, to_checksum_address
 
 from app.core.config import settings
 
+logger = logging.getLogger(__name__)
+
 ZERO_ADDRESS = "0x0000000000000000000000000000000000000000"
 ZERO_BYTES32 = b"\x00" * 32
 ASSERT_TRUTH_SIGNATURE = "assertTruth(bytes,address,address,address,uint64,address,uint256,bytes32,bytes32)"
@@ -19,8 +22,10 @@ GET_ASSERTION_SIGNATURE = "getAssertion(bytes32)"
 ASSERTION_MADE_EVENT_SIGNATURE = (
     "AssertionMade(bytes32,bytes32,bytes,address,address,address,address,uint64,address,uint256,bytes32)"
 )
+SETTLE_ASSERTION_SIGNATURE = "settleAssertion(bytes32)"
 ASSERT_TRUTH_SELECTOR = keccak(text=ASSERT_TRUTH_SIGNATURE)[:4]
 GET_ASSERTION_SELECTOR = keccak(text=GET_ASSERTION_SIGNATURE)[:4]
+SETTLE_ASSERTION_SELECTOR = keccak(text=SETTLE_ASSERTION_SIGNATURE)[:4]
 ASSERTION_MADE_EVENT_TOPIC = "0x" + keccak(text=ASSERTION_MADE_EVENT_SIGNATURE).hex()
 
 
@@ -54,6 +59,15 @@ class OracleService:
         raise NotImplementedError
 
     async def approve_bond_allowance(self, amount_wei: str | None = None) -> dict[str, object]:
+        raise NotImplementedError
+
+    async def assert_truth(self, request: OracleResolutionRequest) -> dict[str, object]:
+        raise NotImplementedError
+
+    async def settle_assertion(self, assertion_id: str) -> dict[str, object]:
+        raise NotImplementedError
+
+    async def check_assertion_status(self, assertion_id: str) -> dict[str, object]:
         raise NotImplementedError
 
 
@@ -211,6 +225,11 @@ def _build_get_assertion_calldata(assertion_id: str) -> str:
     return "0x" + (GET_ASSERTION_SELECTOR + encoded_args).hex()
 
 
+def _build_settle_assertion_calldata(assertion_id: str) -> str:
+    encoded_args = encode(["bytes32"], [bytes.fromhex(_strip_0x(assertion_id))])
+    return "0x" + (SETTLE_ASSERTION_SELECTOR + encoded_args).hex()
+
+
 def _decode_assertion_id(raw_result: str) -> str:
     payload = bytes.fromhex(_strip_0x(raw_result))
     (assertion_id,) = decode(["bytes32"], payload)
@@ -336,6 +355,139 @@ class _JsonRpcClient:
         return body.get("result")
 
 
+class LiveOracleProvider:
+    """Encapsulates Web3 interaction patterns: contract calls, gas estimation, tx signing."""
+
+    def __init__(self) -> None:
+        self._log = logging.getLogger(f"{__name__}.LiveOracleProvider")
+        self._rpc: _JsonRpcClient | None = None
+        self._signer_address: str | None = None
+        self._private_key: str | None = None
+        self._chain_id: int | None = None
+
+    @property
+    def is_available(self) -> bool:
+        """True when the minimum config for live operations (RPC URL + signer key) is present."""
+        return bool(settings.oracle_rpc_url and settings.oracle_signer_private_key)
+
+    async def initialize(self) -> None:
+        """Validate RPC connectivity and resolve the signer wallet.
+
+        Raises ``OracleConfigurationError`` if any prerequisite is missing or mismatched.
+        """
+        if not settings.oracle_rpc_url:
+            raise OracleConfigurationError("ORACLE_RPC_URL is required for live oracle operations")
+        if not settings.oracle_signer_private_key:
+            raise OracleConfigurationError("ORACLE_SIGNER_PRIVATE_KEY is required for live oracle operations")
+
+        rpc = _JsonRpcClient(settings.oracle_rpc_url)
+        rpc_chain_hex = await rpc.request("eth_chainId", [])
+        if not isinstance(rpc_chain_hex, str):
+            raise OracleConfigurationError("Could not read eth_chainId from the configured RPC")
+        rpc_chain_id = int(rpc_chain_hex, 16)
+        if rpc_chain_id != settings.oracle_chain_id:
+            raise OracleConfigurationError(
+                f"RPC chain mismatch: expected {settings.oracle_chain_id}, got {rpc_chain_id}"
+            )
+
+        account = Account.from_key(settings.oracle_signer_private_key)
+        derived = to_checksum_address(account.address)
+        if settings.oracle_signer_address:
+            configured = _normalize_address(settings.oracle_signer_address, field_name="ORACLE_SIGNER_ADDRESS")
+            if configured != derived:
+                raise OracleConfigurationError(
+                    f"ORACLE_SIGNER_ADDRESS does not match the configured private key ({derived})"
+                )
+
+        self._rpc = rpc
+        self._chain_id = rpc_chain_id
+        self._signer_address = derived
+        self._private_key = settings.oracle_signer_private_key
+        self._log.info("Live oracle provider initialized: chain=%d signer=%s", rpc_chain_id, derived)
+
+    def _require_initialized(self) -> tuple[_JsonRpcClient, str, str, int]:
+        if self._rpc is None or self._signer_address is None or self._private_key is None or self._chain_id is None:
+            raise OracleConfigurationError("LiveOracleProvider has not been initialized — call initialize() first")
+        return self._rpc, self._signer_address, self._private_key, self._chain_id
+
+    @property
+    def signer_address(self) -> str | None:
+        return self._signer_address
+
+    @property
+    def chain_id(self) -> int | None:
+        return self._chain_id
+
+    async def eth_call(self, *, to: str, data: str, from_address: str | None = None) -> str:
+        """Execute a read-only ``eth_call`` and return the hex result."""
+        rpc, signer, _, _ = self._require_initialized()
+        call_obj: dict[str, str] = {"to": to, "data": data}
+        if from_address:
+            call_obj["from"] = from_address
+        result = await rpc.request("eth_call", [call_obj, "latest"])
+        if not isinstance(result, str):
+            raise OracleConfigurationError(f"eth_call to {to} returned unexpected payload")
+        return result
+
+    async def estimate_gas(self, *, from_address: str, to: str, data: str) -> int:
+        rpc, _, _, _ = self._require_initialized()
+        result = await rpc.request("eth_estimateGas", [{"from": from_address, "to": to, "data": data}])
+        return _coerce_int(result, field_name="eth_estimateGas")
+
+    async def get_gas_price(self) -> int:
+        rpc, _, _, _ = self._require_initialized()
+        result = await rpc.request("eth_gasPrice", [])
+        return _coerce_int(result, field_name="eth_gasPrice")
+
+    async def get_nonce(self, address: str | None = None) -> int:
+        rpc, signer, _, _ = self._require_initialized()
+        target = address or signer
+        result = await rpc.request("eth_getTransactionCount", [target, "pending"])
+        return _coerce_int(result, field_name="eth_getTransactionCount")
+
+    async def sign_and_send(self, *, to: str, data: str, value: int = 0, gas_buffer: int = 50_000) -> dict[str, object]:
+        """Build, sign, and broadcast a transaction. Returns a metadata dict with tx_hash, nonce, etc."""
+        rpc, signer, private_key, chain_id = self._require_initialized()
+
+        nonce = await self.get_nonce()
+        gas_price = await self.get_gas_price()
+        estimated_gas = await self.estimate_gas(from_address=signer, to=to, data=data)
+        gas_limit = estimated_gas + gas_buffer
+
+        tx = {
+            "chainId": chain_id,
+            "nonce": nonce,
+            "gas": gas_limit,
+            "gasPrice": gas_price,
+            "to": to,
+            "value": value,
+            "data": data,
+        }
+        signed = Account.sign_transaction(tx, private_key)
+        tx_hash = await rpc.request("eth_sendRawTransaction", [signed.raw_transaction.hex()])
+        if not isinstance(tx_hash, str):
+            raise OracleConfigurationError("Transaction did not return a hash")
+
+        self._log.info("Transaction sent: hash=%s nonce=%d gas_limit=%d", tx_hash, nonce, gas_limit)
+        return {
+            "tx_hash": tx_hash,
+            "signer_address": signer,
+            "chain_id": chain_id,
+            "nonce": nonce,
+            "gas_limit": gas_limit,
+            "gas_price_wei": str(gas_price),
+        }
+
+    async def get_transaction_receipt(self, tx_hash: str) -> dict[str, object] | None:
+        rpc, _, _, _ = self._require_initialized()
+        result = await rpc.request("eth_getTransactionReceipt", [tx_hash])
+        if result is None:
+            return None
+        if not isinstance(result, dict):
+            raise OracleConfigurationError("eth_getTransactionReceipt returned unexpected payload")
+        return result
+
+
 class MockOracleService(OracleService):
     async def begin_resolution(self, request: OracleResolutionRequest) -> dict[str, object]:
         return {
@@ -391,6 +543,38 @@ class MockOracleService(OracleService):
             "nonce": None,
             "gas_limit": None,
             "gas_price_wei": None,
+        }
+
+    async def assert_truth(self, request: OracleResolutionRequest) -> dict[str, object]:
+        assertion_hash = sha256(f"{request.market_slug}:{request.candidate_id}".encode("utf-8")).hexdigest()
+        return {
+            "provider": "mock_oracle",
+            "execution_mode": settings.oracle_execution_mode,
+            "submission_status": "simulated",
+            "assertion_id": f"mock-{assertion_hash[:24]}",
+            "assertion_claim": _build_uma_claim(request),
+            "tx_hash": None,
+        }
+
+    async def settle_assertion(self, assertion_id: str) -> dict[str, object]:
+        return {
+            "provider": "mock_oracle",
+            "execution_mode": settings.oracle_execution_mode,
+            "submission_status": "simulated",
+            "assertion_id": assertion_id,
+            "settled": True,
+            "settlement_resolution": True,
+            "tx_hash": None,
+        }
+
+    async def check_assertion_status(self, assertion_id: str) -> dict[str, object]:
+        return {
+            "provider": "mock_oracle",
+            "execution_mode": settings.oracle_execution_mode,
+            "assertion_id": assertion_id,
+            "assertion_settled": True,
+            "assertion_resolution": True,
+            "onchain_assertion_state": "settled_true",
         }
 
 
@@ -844,3 +1028,212 @@ class UMAOracleService(OracleService):
             raise OracleConfigurationError("UMA getAssertion returned an unexpected payload.")
         payload.update(_decode_assertion_state(assertion_result))
         return payload
+
+    # ------------------------------------------------------------------
+    # Live-mode oracle primitives
+    # ------------------------------------------------------------------
+
+    def _get_live_provider(self) -> LiveOracleProvider:
+        if not hasattr(self, "_live_provider"):
+            self._live_provider = LiveOracleProvider()
+        return self._live_provider
+
+    async def _ensure_live_provider(self) -> LiveOracleProvider:
+        """Return an initialized ``LiveOracleProvider``, or raise with a clear message."""
+        provider = self._get_live_provider()
+        if not provider.is_available:
+            raise OracleConfigurationError(
+                "Live oracle operations require ORACLE_RPC_URL and ORACLE_SIGNER_PRIVATE_KEY"
+            )
+        if provider.signer_address is None:
+            await provider.initialize()
+        return provider
+
+    async def assert_truth(self, request: OracleResolutionRequest) -> dict[str, object]:
+        """Submit an ``assertTruth`` call to UMA's Optimistic Oracle V3.
+
+        In *simulated* mode (or when live credentials are absent) this returns a
+        deterministic stub payload. In *live* mode it builds the calldata, runs a
+        preflight ``eth_call``, then signs and broadcasts the transaction.
+        """
+        claim = _build_uma_claim(request)
+        assertion_hash = sha256(f"{request.market_slug}:{request.candidate_id}".encode("utf-8")).hexdigest()
+        simulated_id = f"uma-dev-{assertion_hash[:24]}"
+
+        base = {
+            "provider": "uma_optimistic_oracle_v3",
+            "assertion_method": "assertTruth",
+            "assertion_claim": claim,
+            "assertion_identifier": settings.oracle_uma_assertion_identifier,
+            "oracle_contract_address": settings.oracle_uma_oo_address or None,
+            "currency_address": settings.oracle_currency_address or None,
+            "chain_id": settings.oracle_chain_id,
+            "bond_wei": settings.oracle_bond_wei,
+            "reward_wei": settings.oracle_reward_wei,
+            "liveness_seconds": settings.oracle_liveness_minutes * 60,
+            "execution_mode": settings.oracle_execution_mode,
+        }
+
+        if settings.oracle_execution_mode != "live":
+            logger.debug("assert_truth: simulated mode — returning stub for market %s", request.market_slug)
+            return {
+                **base,
+                "assertion_id": simulated_id,
+                "submission_status": "simulated",
+                "tx_hash": None,
+                "signer_address": settings.oracle_signer_address or None,
+            }
+
+        if not self._get_live_provider().is_available:
+            logger.warning(
+                "assert_truth: live mode requested but RPC/keys not configured — falling back to simulated"
+            )
+            return {
+                **base,
+                "assertion_id": simulated_id,
+                "submission_status": "simulated_fallback",
+                "tx_hash": None,
+                "signer_address": None,
+                "fallback_reason": "ORACLE_RPC_URL or ORACLE_SIGNER_PRIVATE_KEY not configured",
+            }
+
+        provider = await self._ensure_live_provider()
+        signer = provider.signer_address
+        oo_address = _normalize_address(settings.oracle_uma_oo_address, field_name="ORACLE_UMA_OO_ADDRESS")
+        currency_address = _normalize_address(settings.oracle_currency_address, field_name="ORACLE_CURRENCY_ADDRESS")
+        escalation_manager = _normalize_address(
+            settings.oracle_uma_escalation_manager,
+            field_name="ORACLE_UMA_ESCALATION_MANAGER",
+            allow_zero=True,
+        )
+        liveness_seconds = settings.oracle_liveness_minutes * 60
+        bond_wei = _coerce_int(settings.oracle_bond_wei, field_name="ORACLE_BOND_WEI")
+
+        calldata = _build_assert_truth_calldata(
+            claim=claim,
+            asserter=signer,
+            callback_recipient=ZERO_ADDRESS,
+            escalation_manager=escalation_manager,
+            liveness_seconds=liveness_seconds,
+            currency=currency_address,
+            bond_wei=bond_wei,
+            identifier=settings.oracle_uma_assertion_identifier,
+            domain_id=ZERO_BYTES32,
+        )
+
+        preflight_result = await provider.eth_call(from_address=signer, to=oo_address, data=calldata)
+        assertion_id = _decode_assertion_id(preflight_result)
+
+        tx_meta = await provider.sign_and_send(to=oo_address, data=calldata)
+
+        return {
+            **base,
+            "assertion_id": assertion_id,
+            "signer_address": signer,
+            "submission_status": "submitted",
+            "submitted_at": datetime.now(timezone.utc).isoformat(),
+            **tx_meta,
+        }
+
+    async def settle_assertion(self, assertion_id: str) -> dict[str, object]:
+        """Settle an assertion on UMA's Optimistic Oracle V3 after the challenge window.
+
+        In *simulated* mode this returns a stub. In *live* mode it builds the
+        ``settleAssertion(bytes32)`` calldata and broadcasts the transaction.
+        """
+        base = {
+            "provider": "uma_optimistic_oracle_v3",
+            "assertion_method": "settleAssertion",
+            "assertion_id": assertion_id,
+            "oracle_contract_address": settings.oracle_uma_oo_address or None,
+            "chain_id": settings.oracle_chain_id,
+            "execution_mode": settings.oracle_execution_mode,
+        }
+
+        if settings.oracle_execution_mode != "live":
+            logger.debug("settle_assertion: simulated mode — returning stub for %s", assertion_id)
+            return {
+                **base,
+                "submission_status": "simulated",
+                "settled": True,
+                "settlement_resolution": True,
+                "tx_hash": None,
+                "signer_address": settings.oracle_signer_address or None,
+            }
+
+        if not self._get_live_provider().is_available:
+            logger.warning(
+                "settle_assertion: live mode requested but RPC/keys not configured — falling back to simulated"
+            )
+            return {
+                **base,
+                "submission_status": "simulated_fallback",
+                "settled": False,
+                "tx_hash": None,
+                "signer_address": None,
+                "fallback_reason": "ORACLE_RPC_URL or ORACLE_SIGNER_PRIVATE_KEY not configured",
+            }
+
+        provider = await self._ensure_live_provider()
+        oo_address = _normalize_address(settings.oracle_uma_oo_address, field_name="ORACLE_UMA_OO_ADDRESS")
+        calldata = _build_settle_assertion_calldata(assertion_id)
+
+        tx_meta = await provider.sign_and_send(to=oo_address, data=calldata, gas_buffer=30_000)
+
+        return {
+            **base,
+            "signer_address": provider.signer_address,
+            "submission_status": "submitted",
+            "submitted_at": datetime.now(timezone.utc).isoformat(),
+            **tx_meta,
+        }
+
+    async def check_assertion_status(self, assertion_id: str) -> dict[str, object]:
+        """Read the on-chain state of an assertion via ``getAssertion(bytes32)``.
+
+        In *simulated* mode this returns a deterministic stub. In *live* mode it
+        performs an ``eth_call`` against the Optimistic Oracle contract.
+        """
+        base = {
+            "provider": "uma_optimistic_oracle_v3",
+            "assertion_id": assertion_id,
+            "oracle_contract_address": settings.oracle_uma_oo_address or None,
+            "chain_id": settings.oracle_chain_id,
+            "execution_mode": settings.oracle_execution_mode,
+        }
+
+        if settings.oracle_execution_mode != "live":
+            logger.debug("check_assertion_status: simulated mode — returning stub for %s", assertion_id)
+            return {
+                **base,
+                "assertion_settled": False,
+                "assertion_resolution": False,
+                "onchain_assertion_state": "asserted",
+                "submission_status": "simulated",
+            }
+
+        if not self._get_live_provider().is_available:
+            logger.warning(
+                "check_assertion_status: live mode requested but RPC/keys not configured — falling back to simulated"
+            )
+            return {
+                **base,
+                "assertion_settled": False,
+                "assertion_resolution": False,
+                "onchain_assertion_state": "unknown",
+                "submission_status": "simulated_fallback",
+                "fallback_reason": "ORACLE_RPC_URL or ORACLE_SIGNER_PRIVATE_KEY not configured",
+            }
+
+        provider = await self._ensure_live_provider()
+        oo_address = _normalize_address(settings.oracle_uma_oo_address, field_name="ORACLE_UMA_OO_ADDRESS")
+        calldata = _build_get_assertion_calldata(assertion_id)
+
+        raw_result = await provider.eth_call(to=oo_address, data=calldata)
+        assertion_state = _decode_assertion_state(raw_result)
+
+        return {
+            **base,
+            "checked_at": datetime.now(timezone.utc).isoformat(),
+            **assertion_state,
+        }

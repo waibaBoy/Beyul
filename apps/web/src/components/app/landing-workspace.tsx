@@ -1,11 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { useAuth } from "@/components/auth/auth-provider";
 import { beyulApiFetch } from "@/lib/api/beyul-api";
-import type { Market } from "@/lib/api/types";
+import type { Market, MarketHistory } from "@/lib/api/types";
 import {
   type MarketDiscoveryCategory,
   filterMarketsByDiscoveryCategory,
@@ -13,6 +13,7 @@ import {
   isMarketDiscoveryCategory,
   sortMarketsByVolume
 } from "@/lib/markets/discovery";
+import { MarketIcon } from "@/components/app/market-icon";
 
 const MAX_GRID_MARKETS = 12;
 
@@ -41,6 +42,81 @@ const formatCountdown = (value: string | null): string | null => {
   if (days > 0) return `${days}d`;
   if (hours > 0) return `${hours}h`;
   return `${totalMinutes}m`;
+};
+
+const buildSparklinePath = (points: number[]) => {
+  if (points.length < 2) return null;
+  const width = 100;
+  const height = 28;
+  const min = Math.min(...points);
+  const max = Math.max(...points);
+  const span = max - min || 1;
+  return points
+    .map((value, index) => {
+      const x = (index / (points.length - 1)) * width;
+      const y = height - ((value - min) / span) * height;
+      return `${index === 0 ? "M" : "L"}${x.toFixed(2)} ${y.toFixed(2)}`;
+    })
+    .join(" ");
+};
+
+const LandingMiniSparkline = ({ slug, outcomeId }: { slug: string; outcomeId?: string }) => {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const fetchedRef = useRef(false);
+  const [points, setPoints] = useState<number[]>([]);
+
+  useEffect(() => {
+    fetchedRef.current = false;
+    setPoints([]);
+    const el = containerRef.current;
+    if (!el || !outcomeId) {
+      return;
+    }
+    let cancelled = false;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (!entries[0]?.isIntersecting || fetchedRef.current) {
+          return;
+        }
+        fetchedRef.current = true;
+        observer.disconnect();
+        void (async () => {
+          try {
+            const params = new URLSearchParams({
+              outcome_id: outcomeId,
+              range: "1D"
+            });
+            const history = await beyulApiFetch<MarketHistory>(`/api/v1/markets/${slug}/history?${params.toString()}`);
+            if (cancelled) {
+              return;
+            }
+            const nextPoints = history.buckets
+              .map((bucket) => Number(bucket.close_price ?? bucket.open_price))
+              .filter((price) => Number.isFinite(price));
+            setPoints(nextPoints);
+          } catch {
+            if (!cancelled) {
+              setPoints([]);
+            }
+          }
+        })();
+      },
+      { rootMargin: "160px 0px", threshold: 0.01 }
+    );
+    observer.observe(el);
+    return () => {
+      cancelled = true;
+      observer.disconnect();
+    };
+  }, [slug, outcomeId]);
+
+  return (
+    <div ref={containerRef} className="landing-mini-chart" aria-hidden="true">
+      <svg viewBox="0 0 100 28" preserveAspectRatio="none">
+        <path d={buildSparklinePath(points) ?? "M0 14 L100 14"} className="landing-mini-chart-path" />
+      </svg>
+    </div>
+  );
 };
 
 export const LandingWorkspace = () => {
@@ -84,7 +160,7 @@ export const LandingWorkspace = () => {
     [openMarkets, selectedCategory]
   );
 
-  const featuredMarkets = sortedMarkets.slice(0, 3);
+  const featuredMarkets = useMemo(() => sortedMarkets.slice(0, 3), [sortedMarkets]);
 
   const communityHighlights = useMemo(() => {
     const seen = new Map<string, { label: string; href: string }>();
@@ -165,13 +241,17 @@ export const LandingWorkspace = () => {
               return (
                 <Link className="landing-feat-card" href={`/markets/${market.slug}`} key={market.id}>
                   <div className="landing-feat-top">
-                    <span className="landing-cat-tag">{getMarketDiscoveryCategory(market)}</span>
                     <span className={`landing-status-dot ${market.status === "open" ? "is-live" : ""}`} />
+                    <span className="landing-cat-tag">{getMarketDiscoveryCategory(market)}</span>
                   </div>
-                  <h3 className="landing-feat-title">{market.title}</h3>
+                  <div className="landing-feat-title-row">
+                    <MarketIcon market={market} size={42} />
+                    <h3 className="landing-feat-title">{market.title}</h3>
+                  </div>
                   <div className="landing-prob-bar">
                     <div className="landing-prob-fill" style={{ width: `${yes ?? 50}%` }} />
                   </div>
+                  <LandingMiniSparkline slug={market.slug} outcomeId={market.outcomes[0]?.id} />
                   <div className="landing-feat-odds">
                     <span className="landing-yes-label">YES {yes !== null ? `${yes}%` : "—"}</span>
                     <span className="landing-no-label">NO {no !== null ? `${no}%` : "—"}</span>
@@ -217,10 +297,14 @@ export const LandingWorkspace = () => {
                       <span className="landing-live-badge">Live</span>
                     )}
                   </div>
-                  <h3 className="landing-card-title">{market.title}</h3>
+                  <div className="landing-card-title-row">
+                    <MarketIcon market={market} size={36} />
+                    <h3 className="landing-card-title">{market.title}</h3>
+                  </div>
                   <div className="landing-prob-bar">
                     <div className="landing-prob-fill" style={{ width: `${yes ?? 50}%` }} />
                   </div>
+                  <LandingMiniSparkline slug={market.slug} outcomeId={market.outcomes[0]?.id} />
                   <div className="landing-card-odds">
                     <span className="landing-yes-label">YES {yes !== null ? `${yes}%` : "—"}</span>
                     <span className="landing-no-label">NO {no !== null ? `${no}%` : "—"}</span>
@@ -268,6 +352,14 @@ export const LandingWorkspace = () => {
             Propose a market
           </Link>
         </div>
+        <p className="landing-about-teaser">
+          New here?{" "}
+          <Link href="/about" className="landing-about-link">
+            About Satta
+          </Link>{" "}
+          — how bets work, <strong>2% taker / 0% maker</strong> fees, and creator rewards when markets hit volume
+          milestones.
+        </p>
       </section>
 
     </main>

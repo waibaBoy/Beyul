@@ -6,6 +6,7 @@ import { useAuth } from "@/components/auth/auth-provider";
 import { useAuthAction } from "@/components/auth/use-auth-action";
 import { beyulApiFetch } from "@/lib/api/beyul-api";
 import { buildTemplateContractPrefill } from "@/lib/markets/request-templates";
+import { getSupabaseBrowserClient } from "@/lib/supabase/browser";
 import type { MarketRequest, MarketRequestAnswer } from "@/lib/api/types";
 
 type MarketRequestDetailWorkspaceProps = {
@@ -89,6 +90,9 @@ const defaultContractForm = contractAnswerFields.reduce((accumulator, field) => 
   return accumulator;
 }, {} as ContractAnswerForm);
 
+const ALLOWED_IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/gif"]);
+const MAX_IMAGE_UPLOAD_BYTES = 5 * 1024 * 1024;
+
 const mergeAnswer = (answers: MarketRequestAnswer[], saved: MarketRequestAnswer) => {
   const withoutCurrent = answers.filter((item) => item.question_key !== saved.question_key);
   return [...withoutCurrent, saved].sort((left, right) => left.question_key.localeCompare(right.question_key));
@@ -131,6 +135,7 @@ export const MarketRequestDetailWorkspace = ({ requestId }: MarketRequestDetailW
   const [answers, setAnswers] = useState<MarketRequestAnswer[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [contractForm, setContractForm] = useState<ContractAnswerForm>(defaultContractForm);
+  const [imageUploading, setImageUploading] = useState(false);
   const isDraft = marketRequest?.status === "draft";
   const { errorMessage, isSubmitting, runAction, setStatusMessage, statusMessage } = useAuthAction(
     "Load the request detail, intake answers, and submission state."
@@ -180,6 +185,40 @@ export const MarketRequestDetailWorkspace = ({ requestId }: MarketRequestDetailW
     };
   }, [getAccessToken, requestId, session, setStatusMessage]);
 
+  const handleImageUpload = async (file: File) => {
+    if (!marketRequest || !isDraft) return;
+    if (!ALLOWED_IMAGE_TYPES.has(file.type)) {
+      setStatusMessage("Unsupported image type. Use PNG, JPEG, WEBP, or GIF.");
+      return;
+    }
+    if (file.size > MAX_IMAGE_UPLOAD_BYTES) {
+      setStatusMessage("Image is too large. Maximum size is 5MB.");
+      return;
+    }
+    setImageUploading(true);
+    try {
+      const supabase = getSupabaseBrowserClient();
+      const ext = file.name.split(".").pop() ?? "png";
+      const path = `${Date.now()}-${requestId}.${ext}`;
+      const { data, error } = await supabase.storage.from("market-images").upload(path, file, { upsert: true });
+      if (error || !data) throw error ?? new Error("Upload failed");
+      const { data: urlData } = supabase.storage.from("market-images").getPublicUrl(data.path);
+
+      const accessToken = await getAccessToken();
+      const updated = await beyulApiFetch<MarketRequest>(`/api/v1/market-requests/${requestId}`, {
+        method: "PUT",
+        accessToken,
+        json: { image_url: urlData.publicUrl }
+      });
+      setMarketRequest(updated);
+      setStatusMessage("Market image updated.");
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "Failed to upload market image.");
+    } finally {
+      setImageUploading(false);
+    }
+  };
+
   return (
     <>
       <section className="auth-section">
@@ -217,6 +256,57 @@ export const MarketRequestDetailWorkspace = ({ requestId }: MarketRequestDetailW
         ) : (
           <p>Market request not found or not accessible.</p>
         )}
+
+        {marketRequest ? (
+          <div className="field">
+            <label htmlFor="detail-request-image-file">Market image <span className="field-hint-inline">(optional)</span></label>
+            <div className="image-upload-row">
+              {marketRequest.image_url ? (
+                <img className="market-icon" src={marketRequest.image_url} alt="Market image preview" width={48} height={48} />
+              ) : null}
+              <label className="image-upload-btn" htmlFor="detail-request-image-file">
+                {imageUploading ? "Uploading..." : marketRequest.image_url ? "Change image" : "Upload image"}
+              </label>
+              <input
+                id="detail-request-image-file"
+                type="file"
+                accept="image/png,image/jpeg,image/webp,image/gif"
+                style={{ display: "none" }}
+                disabled={!isDraft || !session || imageUploading}
+                onChange={(event) => {
+                  const file = event.currentTarget.files?.[0];
+                  if (file) void handleImageUpload(file);
+                  event.currentTarget.value = "";
+                }}
+              />
+              {marketRequest.image_url ? (
+                <button
+                  type="button"
+                  className="image-upload-clear"
+                  disabled={!isDraft || !session || imageUploading}
+                  onClick={() =>
+                    void runAction(
+                      "Removing market image...",
+                      async () => {
+                        const accessToken = await getAccessToken();
+                        const updated = await beyulApiFetch<MarketRequest>(`/api/v1/market-requests/${requestId}`, {
+                          method: "PUT",
+                          accessToken,
+                          json: { image_url: null }
+                        });
+                        setMarketRequest(updated);
+                        return updated;
+                      },
+                      { successMessage: "Market image removed." }
+                    )
+                  }
+                >
+                  Remove
+                </button>
+              ) : null}
+            </div>
+          </div>
+        ) : null}
       </section>
 
       <section className="auth-section">

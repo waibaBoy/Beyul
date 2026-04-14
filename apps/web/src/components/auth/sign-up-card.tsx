@@ -1,9 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import Link from "next/link";
+import { useMemo, useState } from "react";
 import { useAuth } from "@/components/auth/auth-provider";
 import { AuthFeedback } from "@/components/auth/auth-feedback";
+import { ResponsibleGamblingNotice } from "@/components/auth/responsible-gambling-notice";
 import { useAuthAction } from "@/components/auth/use-auth-action";
+import { buildSignupComplianceMetadata } from "@/lib/legal/compliance-copy";
 
 const defaultSignUp = {
   email: "",
@@ -16,8 +19,23 @@ const defaultSignUp = {
 export const SignUpCard = () => {
   const { signUpWithPassword } = useAuth();
   const [form, setForm] = useState(defaultSignUp);
+  const [ageConfirmed, setAgeConfirmed] = useState(false);
+  const [termsAccepted, setTermsAccepted] = useState(false);
   const { errorMessage, isSubmitting, runAction, statusMessage, setStatusMessage } = useAuthAction(
     "Create a user with the identity fields you want persisted into profile metadata."
+  );
+
+  const canSubmit = useMemo(
+    () =>
+      Boolean(
+        form.email.trim() &&
+          form.password &&
+          form.username.trim() &&
+          form.displayName.trim() &&
+          ageConfirmed &&
+          termsAccepted
+      ),
+    [ageConfirmed, form.displayName, form.email, form.password, form.username, termsAccepted]
   );
 
   return (
@@ -29,8 +47,14 @@ export const SignUpCard = () => {
         className="auth-form"
         onSubmit={(event) => {
           event.preventDefault();
+          if (!canSubmit) {
+            return;
+          }
           void runAction("Creating email/password account...", async () => {
-            await signUpWithPassword(form);
+            await signUpWithPassword({
+              ...form,
+              signupCompliance: buildSignupComplianceMetadata()
+            });
             setStatusMessage("Sign-up request sent. Check your Supabase confirmation flow.");
           });
         }}
@@ -84,8 +108,45 @@ export const SignUpCard = () => {
             onChange={(event) => setForm((current) => ({ ...current, phone: event.target.value }))}
           />
         </div>
+
+        <ResponsibleGamblingNotice />
+
+        <div className="checkbox-stack" role="group" aria-label="Eligibility and terms">
+          <label className="checkbox-field">
+            <input
+              type="checkbox"
+              data-testid="signup-age-confirm"
+              checked={ageConfirmed}
+              onChange={(event) => setAgeConfirmed(event.target.checked)}
+            />
+            <span>
+              I confirm that I am <strong>18 years of age or older</strong> and legally allowed to use this service in
+              my jurisdiction.
+            </span>
+          </label>
+          <label className="checkbox-field">
+            <input
+              type="checkbox"
+              data-testid="signup-terms-confirm"
+              checked={termsAccepted}
+              onChange={(event) => setTermsAccepted(event.target.checked)}
+            />
+            <span>
+              I have read and agree to the{" "}
+              <Link href="/legal/terms" target="_blank" rel="noopener noreferrer">
+                Terms of Service
+              </Link>{" "}
+              and{" "}
+              <Link href="/legal/privacy" target="_blank" rel="noopener noreferrer">
+                Privacy Policy
+              </Link>
+              .
+            </span>
+          </label>
+        </div>
+
         <div className="button-row">
-          <button className="button-primary" disabled={isSubmitting} type="submit">
+          <button className="button-primary" disabled={isSubmitting || !canSubmit} type="submit">
             Create account
           </button>
         </div>

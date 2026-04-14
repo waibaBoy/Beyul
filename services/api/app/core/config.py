@@ -1,7 +1,11 @@
+import logging
 from pathlib import Path
 from typing import Literal
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+logger = logging.getLogger(__name__)
 
 
 SERVICE_API_DIR = Path(__file__).resolve().parents[2]
@@ -51,6 +55,7 @@ class Settings(BaseSettings):
     matching_engine_orders_events_channel: str = "engine.orders.accepted"
     matching_engine_trades_channel: str = "engine.trades.executed"
     matching_engine_books_channel: str = "engine.books.updated"
+    blocked_jurisdictions: str = ""
 
     model_config = SettingsConfigDict(
         env_file=str(REPO_ROOT_DIR / ".env"),
@@ -58,6 +63,29 @@ class Settings(BaseSettings):
         case_sensitive=False,
         extra="ignore",
     )
+
+    @model_validator(mode="after")
+    def enforce_production_safety(self) -> "Settings":
+        env = (self.app_env or "").strip().lower()
+        prod_like = env in {"production", "prod", "staging"}
+        if not prod_like:
+            return self
+        if self.repository_backend != "postgres":
+            raise ValueError("REPOSITORY_BACKEND must be 'postgres' when APP_ENV is production, prod, or staging")
+        if self.allow_dev_auth:
+            raise ValueError("ALLOW_DEV_AUTH must be false when APP_ENV is production, prod, or staging")
+        secret = (self.jwt_secret or "").strip()
+        if not secret or secret == "change_me":
+            raise ValueError("JWT_SECRET must be set to a strong non-default value when APP_ENV is production, prod, or staging")
+        if "change_me" in self.postgres_dsn:
+            raise ValueError("POSTGRES_DSN must not use the default change_me credential when APP_ENV is production, prod, or staging")
+        cb = (self.oracle_callback_secret or "").strip()
+        if not cb or cb == "dev-oracle-secret":
+            raise ValueError(
+                "ORACLE_CALLBACK_SECRET must be set to a dedicated secret when APP_ENV is production, prod, or staging"
+            )
+        logger.info("production-like app_env=%s: repository and auth settings validated", env)
+        return self
 
 
 settings = Settings()

@@ -12,6 +12,7 @@ import type { User } from "@supabase/supabase-js";
 import { beyulApiFetch } from "@/lib/api/beyul-api";
 import type { BackendUser } from "@/lib/api/types";
 import { normalizePhoneNumber, normalizePhoneOtpToken } from "@/lib/auth/phone";
+import type { SignupComplianceMetadata } from "@/lib/legal/compliance-copy";
 import { publicEnv } from "@/lib/env";
 import { getSupabaseBrowserClient } from "@/lib/supabase/browser";
 
@@ -24,6 +25,7 @@ type SignUpInput = PasswordAuthInput & {
   username: string;
   displayName: string;
   phone?: string;
+  signupCompliance: SignupComplianceMetadata;
 };
 
 type AuthSession = {
@@ -145,7 +147,12 @@ export const AuthProvider = ({ children, initialAccessToken, initialUser }: Auth
             data: {
               username: input.username,
               display_name: input.displayName,
-              phone_e164: input.phone || null
+              phone_e164: input.phone || null,
+              legal_bundle_version: input.signupCompliance.legal_bundle_version,
+              terms_version: input.signupCompliance.terms_version,
+              privacy_version: input.signupCompliance.privacy_version,
+              terms_accepted_at: input.signupCompliance.terms_accepted_at,
+              age_confirmed: input.signupCompliance.age_confirmed
             },
             emailRedirectTo: `${publicEnv.siteUrl}/auth/callback`
           }

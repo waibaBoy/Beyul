@@ -1,8 +1,8 @@
 # Beyul
 
-Beyul is a monorepo scaffold for a prediction-market platform inspired by Polymarket.
+Beyul is a monorepo for a prediction-market platform inspired by Polymarket, with a working local stack (Next.js, FastAPI, Postgres via Supabase migrations, optional in-memory API mode).
 
-This scaffold is optimized around a split-stack architecture:
+The repo is optimized around a split-stack architecture:
 
 - Rust for low-latency matching, market state fanout, and price ingestion
 - Python FastAPI for REST, auth, admin, and operational workflows
@@ -22,7 +22,10 @@ This scaffold is optimized around a split-stack architecture:
 |-- contracts/
 |   `-- polygon/              # Solidity contracts and deployment/test scaffold
 |-- docs/
-|   `-- architecture.md       # High-level system design
+|   |-- architecture.md       # System design, implementation status, settlement & trust model
+|   |-- domain-rules-parity.md # Maps domain rules to routes/UI (living doc)
+|   |-- phase-execution-roadmap.md # Phase tracker for competitor-gap implementation
+|   `-- competitive-notes-polymarket-kalshi.md # Feature backlog vs Polymarket / Kalshi (living)
 |-- infra/
 |   |-- aws/                  # EC2 deployment notes and infra placeholders
 |   `-- docker/               # Local Postgres/Redis stack
@@ -81,20 +84,20 @@ Settlement and escrow contract scaffold for:
 
 ## Local development
 
-This scaffold currently sets up architecture and starter files only.
+Typical local workflow:
 
-Planned local workflow:
+1. Start infra with `infra/docker/docker-compose.local.yml` (Postgres/Redis as needed).
+2. Apply Supabase SQL migrations under `supabase/migrations` in order through `010_legal_acceptances.sql` (or run `scripts/supabase/010_legal_acceptances_standalone.sql` after `009` if you add compliance later), when using Postgres.
+3. Run FastAPI from `services/api` (defaults use `REPOSITORY_BACKEND=memory` unless you point at Postgres).
+4. Run Next.js from `apps/web`.
+5. Optionally run the Rust workspace from `services/realtime` for matching-engine and websocket features.
 
-1. Start infra with `infra/docker/docker-compose.local.yml`
-2. Run the Rust workspace from `services/realtime`
-3. Run FastAPI from `services/api`
-4. Run Next.js from `apps/web`
+Production-like deployments must set `APP_ENV` to `production` or `staging` only together with `REPOSITORY_BACKEND=postgres`, strong `JWT_SECRET`, real `POSTGRES_DSN`, `ALLOW_DEV_AUTH=false`, and a non-default `ORACLE_CALLBACK_SECRET` (validated at API startup).
 
 ## Environment files
 
-- Root shared defaults: `.env.example`
-- Web: `apps/web/.env.example`
-- API: `services/api/.env.example`
+- Web: configure via `apps/web` (see `apps/web/README.md` if present).
+- API: root `.env` at repo root is loaded by `services/api` (`Settings` in `app/core/config.py`).
 - Rust: `services/realtime/.env.example`
 - Contracts: `contracts/polygon/.env.example`
 

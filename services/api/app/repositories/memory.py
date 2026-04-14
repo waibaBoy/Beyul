@@ -626,6 +626,7 @@ class InMemoryMarketRequestRepository(MarketRequestRepository):
             slug="rba-rate-cut-q3",
             question="Will the RBA cut the cash rate before the end of Q3?",
             description="Local API scaffold draft.",
+            image_url=None,
             template_key=None,
             template_config=None,
             market_access_mode="public",
@@ -683,6 +684,7 @@ class InMemoryMarketRequestRepository(MarketRequestRepository):
             slug=payload.slug,
             question=payload.question,
             description=payload.description,
+            image_url=payload.image_url,
             template_key=payload.template_key,
             template_config=payload.template_config,
             market_access_mode=payload.market_access_mode,
@@ -719,11 +721,13 @@ class InMemoryMarketRequestRepository(MarketRequestRepository):
             raise NotFoundError("Market request not found")
         if request.status != "draft":
             raise ConflictError("Only draft market requests can be updated")
+        image_url_value = payload.image_url if "image_url" in payload.model_fields_set else request.image_url
         updated = request.model_copy(
             update={
                 "title": payload.title or request.title,
                 "question": payload.question or request.question,
                 "description": payload.description if payload.description is not None else request.description,
+                "image_url": image_url_value,
                 "settlement_reference_url": (
                     payload.settlement_reference_url
                     if payload.settlement_reference_url is not None
@@ -893,6 +897,7 @@ class InMemoryMarketRepository(MarketRepository):
             title=request.title if request else "Published Market",
             question=request.question if request else "Published market question",
             description=request.description if request else "Converted from a market request in memory mode.",
+            image_url=request.image_url if request else None,
             status="pending_liquidity",
             market_access_mode=request.market_access_mode if request else "public",
             rail_mode=request.requested_rail if request and request.requested_rail else "onchain",

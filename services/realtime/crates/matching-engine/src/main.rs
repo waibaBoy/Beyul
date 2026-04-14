@@ -246,6 +246,25 @@ async fn process_order_command(
         let gross_notional = fill_quantity * execution_price;
         let complementary_notional = fill_quantity - gross_notional;
 
+        // Compute fees from market config — makers pay 0, takers pay platform_fee_bps
+        let fee_row = sqlx::query(
+            r#"
+            select coalesce(platform_fee_bps, 200) as platform_fee_bps,
+                   coalesce(creator_fee_bps, 0) as creator_fee_bps
+            from public.markets where id = $1
+            "#,
+        )
+        .bind(taker.market_id)
+        .fetch_one(&mut *tx)
+        .await
+        .context("failed to fetch market fee config")?;
+
+        let platform_fee_bps: i32 = fee_row.get("platform_fee_bps");
+        let creator_fee_bps: i32 = fee_row.get("creator_fee_bps");
+        let bps_divisor = Decimal::from(10_000);
+        let platform_fee = gross_notional * Decimal::from(platform_fee_bps) / bps_divisor;
+        let creator_fee = gross_notional * Decimal::from(creator_fee_bps) / bps_divisor;
+
         let trade_row = sqlx::query(
             r#"
             insert into public.trades (
@@ -263,7 +282,7 @@ async fn process_order_command(
                 platform_fee_amount,
                 creator_fee_amount
             )
-            values ($1, $2, $3, $4::public.rail_type, $5, $6, $7, $8, $9, $10, $11, 0, 0)
+            values ($1, $2, $3, $4::public.rail_type, $5, $6, $7, $8, $9, $10, $11, $12, $13)
             returning id, executed_at
             "#,
         )
@@ -278,6 +297,8 @@ async fn process_order_command(
         .bind(fill_quantity)
         .bind(execution_price)
         .bind(gross_notional)
+        .bind(platform_fee)
+        .bind(creator_fee)
         .fetch_one(&mut *tx)
         .await
         .context("failed to insert trade")?;
@@ -568,6 +589,9 @@ async fn position_outcome_id_for_fill(
         return Ok(order.outcome_id);
     }
 
+    // NOTE: Complementary outcome resolution assumes binary (2-outcome) markets.
+    // For multi-outcome markets (3+ outcomes), this logic needs to be extended
+    // to handle portfolio-level position netting rather than per-outcome pairing.
     let complementary_outcome_id = sqlx::query_scalar::<_, Uuid>(
         r#"
         select id

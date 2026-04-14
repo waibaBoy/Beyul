@@ -3,6 +3,8 @@
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AuthFeedback } from "@/components/auth/auth-feedback";
+import { InteractiveChart } from "@/components/app/interactive-chart";
+import { MarketIcon } from "@/components/app/market-icon";
 import { useAuth } from "@/components/auth/auth-provider";
 import { useAuthAction } from "@/components/auth/use-auth-action";
 import { beyulApiFetch } from "@/lib/api/beyul-api";
@@ -19,6 +21,7 @@ import type {
   MarketDisputeCreateInput,
   MarketDisputeEvidenceCreateInput,
   MarketDisputeReviewInput,
+  MarketDetailBootstrap,
   MarketHolders,
   MarketHistory,
   MarketHistoryRangeKey,
@@ -218,6 +221,9 @@ export const MarketDetailWorkspace = ({ slug }: MarketDetailWorkspaceProps) => {
   const [historyError, setHistoryError] = useState<string | null>(null);
   const [selectedOutcomeId, setSelectedOutcomeId] = useState("");
   const [side, setSide] = useState<"buy" | "sell">("buy");
+  const [orderEntryMode, setOrderEntryMode] = useState<"market" | "limit">("market");
+  const [chartMode, setChartMode] = useState<"candles" | "line">("candles");
+  const [amount, setAmount] = useState("25");
   const [quantity, setQuantity] = useState("25");
   const [price, setPrice] = useState("0.55");
   const [settlementRequestForm, setSettlementRequestForm] = useState<MarketSettlementRequestInput>({
@@ -235,6 +241,7 @@ export const MarketDetailWorkspace = ({ slug }: MarketDetailWorkspaceProps) => {
     "Load the market trading shell, then route signed-in orders through FastAPI."
   );
   const realtimeRefreshTimerRef = useRef<number | null>(null);
+  const bootstrapSlugRef = useRef<string | null>(null);
   const [historyRefreshKey, setHistoryRefreshKey] = useState(0);
 
   const selectedQuote = useMemo(
@@ -267,6 +274,21 @@ export const MarketDetailWorkspace = ({ slug }: MarketDetailWorkspaceProps) => {
         : "This market is settled. Final payouts have been posted."
       : null;
   const selectedStats = useMemo(() => getOutcomeMicroStats(selectedQuote, selectedOrderBook), [selectedOrderBook, selectedQuote]);
+  const autoPrice = useMemo(() => {
+    if (side === "buy") return selectedStats.best_ask ?? selectedStats.last_price ?? "0.5";
+    return selectedStats.best_bid ?? selectedStats.last_price ?? "0.5";
+  }, [side, selectedStats]);
+  const autoShares = useMemo(() => {
+    const p = Number(autoPrice);
+    const a = Number(amount);
+    if (!p || !a) return 0;
+    return a / p;
+  }, [amount, autoPrice]);
+  const autoPayout = autoShares; // each share pays $1 if the outcome wins
+  const hasLiquidity = useMemo(
+    () => (side === "buy" ? !!selectedStats.best_ask : !!selectedStats.best_bid),
+    [side, selectedStats]
+  );
   const cumulativeBids = useMemo(
     () => buildCumulativeDepth(selectedOrderBook?.bids ?? []),
     [selectedOrderBook]
@@ -407,34 +429,6 @@ export const MarketDetailWorkspace = ({ slug }: MarketDetailWorkspaceProps) => {
     return Math.max(0, Math.min(100, (immediate / requested) * 100));
   }, [orderPreview.immediate_quantity, quantity]);
 
-  const renderDepthLevels = (
-    levels: ReturnType<typeof buildCumulativeDepth>,
-    sideLabel: "Bid" | "Ask",
-    maxCumulativeDepth: number
-  ) => {
-    if (levels.length === 0) {
-      return <p>No resting {sideLabel.toLowerCase()} liquidity.</p>;
-    }
-    return (
-      <div className="depth-level-list">
-        {levels.map((level) => (
-          <div className="depth-level-row" key={`${sideLabel}-${level.price}`}>
-            <div
-              className={`depth-level-fill ${sideLabel === "Bid" ? "bid-fill" : "ask-fill"}`}
-              style={{
-                width: `${maxCumulativeDepth > 0 ? (Number(level.cumulative_quantity) / maxCumulativeDepth) * 100 : 0}%`
-              }}
-            />
-            <strong>{formatPrice(level.price)}</strong>
-            <span>{formatNumber(level.quantity)} qty</span>
-            <span>{formatNumber(level.cumulative_quantity)} cum.</span>
-            <span>{level.order_count} orders</span>
-          </div>
-        ))}
-      </div>
-    );
-  };
-
   useEffect(() => {
     if (!shell) {
       return;
@@ -459,126 +453,55 @@ export const MarketDetailWorkspace = ({ slug }: MarketDetailWorkspaceProps) => {
 
   useEffect(() => {
     let isMounted = true;
+    const slugChanged = bootstrapSlugRef.current !== slug;
+    bootstrapSlugRef.current = slug;
 
-    const loadShell = async () => {
+    if (slugChanged) {
+      setIsLoading(true);
+    }
+    setIsHoldersLoading(true);
+    setIsOrdersLoading(Boolean(session));
+
+    const run = async () => {
       try {
-        const nextShell = await beyulApiFetch<MarketTradingShell>(`/api/v1/markets/${slug}/trading-shell`);
+        const accessToken = session ? await getAccessToken() : null;
+        const bootstrap = await beyulApiFetch<MarketDetailBootstrap>(`/api/v1/markets/${slug}/bootstrap`, {
+          accessToken
+        });
+        const nextShell = bootstrap.shell;
         if (!isMounted) {
           return;
         }
         setShell(nextShell);
         setSelectedOutcomeId((current) => current || nextShell.quotes[0]?.outcome_id || nextShell.market.outcomes[0]?.id || "");
         setStatusMessage(`Loaded trading shell for ${nextShell.market.slug}.`);
+        setHolders(bootstrap.holders);
+        setResolutionState(bootstrap.resolution_state);
+        setBackendUser(bootstrap.backend_user);
+        setPortfolio(bootstrap.portfolio);
+        setMyOrders(bootstrap.my_orders ?? []);
       } catch (error) {
         if (isMounted) {
           setStatusMessage(error instanceof Error ? error.message : "Failed to load market trading shell.");
+          setShell(null);
+        }
+        if (isMounted) {
+          setHolders(null);
+          setResolutionState(null);
+          setBackendUser(null);
+          setPortfolio(null);
+          setMyOrders([]);
         }
       } finally {
         if (isMounted) {
           setIsLoading(false);
-        }
-      }
-    };
-
-    void loadShell();
-
-    return () => {
-      isMounted = false;
-    };
-  }, [setStatusMessage, slug]);
-
-  useEffect(() => {
-    let isMounted = true;
-
-    const loadBackendUser = async () => {
-      if (!session) {
-        if (isMounted) {
-          setBackendUser(null);
-        }
-        return;
-      }
-      try {
-        const accessToken = await getAccessToken();
-        const nextUser = await beyulApiFetch<BackendUser>("/api/v1/auth/me", { accessToken });
-        if (isMounted) {
-          setBackendUser(nextUser);
-        }
-      } catch {
-        if (isMounted) {
-          setBackendUser(null);
-        }
-      }
-    };
-
-    void loadBackendUser();
-
-    return () => {
-      isMounted = false;
-    };
-  }, [getAccessToken, session]);
-
-  useEffect(() => {
-    let isMounted = true;
-
-    const loadPortfolio = async () => {
-      if (!session) {
-        if (isMounted) {
-          setPortfolio(null);
-        }
-        return;
-      }
-      try {
-        const accessToken = await getAccessToken();
-        const nextPortfolio = await beyulApiFetch<PortfolioSummary>("/api/v1/portfolio/me", { accessToken });
-        if (isMounted) {
-          setPortfolio(nextPortfolio);
-        }
-      } catch {
-        if (isMounted) {
-          setPortfolio(null);
-        }
-      }
-    };
-
-    void loadPortfolio();
-    return () => {
-      isMounted = false;
-    };
-  }, [getAccessToken, session]);
-
-  useEffect(() => {
-    let isMounted = true;
-
-    const loadMyOrders = async () => {
-      if (!session) {
-        if (isMounted) {
-          setMyOrders([]);
-          setIsOrdersLoading(false);
-        }
-        return;
-      }
-
-      setIsOrdersLoading(true);
-      try {
-        const accessToken = await getAccessToken();
-        const nextOrders = await beyulApiFetch<MarketOrder[]>(`/api/v1/markets/${slug}/orders/me`, {
-          accessToken
-        });
-        if (isMounted) {
-          setMyOrders(nextOrders);
-        }
-      } catch (error) {
-        if (isMounted) {
-          setStatusMessage(error instanceof Error ? error.message : "Failed to load your market orders.");
-        }
-      } finally {
-        if (isMounted) {
+          setIsHoldersLoading(false);
           setIsOrdersLoading(false);
         }
       }
     };
 
-    void loadMyOrders();
+    void run();
 
     return () => {
       isMounted = false;
@@ -629,34 +552,6 @@ export const MarketDetailWorkspace = ({ slug }: MarketDetailWorkspaceProps) => {
   }, [historyRange, historyRefreshKey, selectedOutcomeId, shell, slug]);
 
   useEffect(() => {
-    let isMounted = true;
-
-    const loadHolders = async () => {
-      setIsHoldersLoading(true);
-      try {
-        const nextHolders = await beyulApiFetch<MarketHolders>(`/api/v1/markets/${slug}/holders?limit=12`);
-        if (isMounted) {
-          setHolders(nextHolders);
-        }
-      } catch {
-        if (isMounted) {
-          setHolders(null);
-        }
-      } finally {
-        if (isMounted) {
-          setIsHoldersLoading(false);
-        }
-      }
-    };
-
-    void loadHolders();
-
-    return () => {
-      isMounted = false;
-    };
-  }, [slug]);
-
-  useEffect(() => {
     if (!shell) {
       return;
     }
@@ -668,29 +563,6 @@ export const MarketDetailWorkspace = ({ slug }: MarketDetailWorkspaceProps) => {
       notes: current.notes || ""
     }));
   }, [resolutionState?.candidate_id, resolutionState?.source_reference_url, shell]);
-
-  useEffect(() => {
-    let isMounted = true;
-
-    const loadResolutionState = async () => {
-      try {
-        const nextResolutionState = await beyulApiFetch<MarketResolutionState>(`/api/v1/markets/${slug}/resolution`);
-        if (isMounted) {
-          setResolutionState(nextResolutionState);
-        }
-      } catch {
-        if (isMounted) {
-          setResolutionState(null);
-        }
-      }
-    };
-
-    void loadResolutionState();
-
-    return () => {
-      isMounted = false;
-    };
-  }, [slug]);
 
   const refreshShellAndOrders = async () => {
     const [nextShell, accessToken] = await Promise.all([
@@ -785,6 +657,112 @@ export const MarketDetailWorkspace = ({ slug }: MarketDetailWorkspaceProps) => {
     }
     return body as T;
   };
+
+  const priceChartSection = (
+    <section className="auth-section market-chart-section">
+      <h2>Price chart</h2>
+      {isHistoryLoading && !history ? (
+        <p>Loading chart...</p>
+      ) : historyError ? (
+        <p>{historyError}</p>
+      ) : chartSeries.points.length === 0 ? (
+        <p>No trade history yet for the selected outcome.</p>
+      ) : (
+        <>
+          <div className="chart-shell">
+            <div className="chart-header">
+              <div className="chart-heading">
+                <strong>{selectedOutcomeLabel}</strong>
+                <span className="pill">
+                  {chartSeries.latest_probability ? `${Math.round(Number(chartSeries.latest_probability))}% implied` : "No probability"}
+                </span>
+                {history ? <span className="pill">{formatHistoryInterval(history.interval_seconds)}</span> : null}
+              </div>
+              <div className="range-switcher" role="tablist" aria-label="Market history range">
+                {historyRangeOptions.map((option) => (
+                  <button
+                    aria-selected={option === historyRange}
+                    className={`range-pill ${option === historyRange ? "is-active" : ""}`}
+                    key={option}
+                    onClick={() => setHistoryRange(option)}
+                    type="button"
+                  >
+                    {option}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="chart-mode-toggle" role="tablist" aria-label="Chart display mode">
+              <button
+                type="button"
+                role="tab"
+                aria-selected={chartMode === "candles"}
+                className={`chart-mode-pill ${chartMode === "candles" ? "is-active" : ""}`}
+                onClick={() => setChartMode("candles")}
+              >
+                Candles
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={chartMode === "line"}
+                className={`chart-mode-pill ${chartMode === "line" ? "is-active" : ""}`}
+                onClick={() => setChartMode("line")}
+              >
+                Line
+              </button>
+            </div>
+            <div className="chart-panel">
+              <span className="chart-label">{chartMode === "candles" ? "Candle buckets" : "Probability history"}</span>
+              <InteractiveChart series={chartSeries} history={history} mode={chartMode} candleWidth={candleWidth} />
+            </div>
+            <div className="chart-panel">
+              <span className="chart-label">Volume bars</span>
+              <svg className="chart-svg" viewBox="0 0 360 120" role="img" aria-label="Volume bars">
+                {chartSeries.points.map((point) => (
+                  <rect
+                    className="volume-bar"
+                    key={`volume-${point.bucket_key}`}
+                    x={Math.max(0, point.x - candleWidth / 2)}
+                    y={120 - point.volume_height}
+                    width={candleWidth}
+                    height={point.volume_height}
+                    rx="4"
+                  />
+                ))}
+              </svg>
+            </div>
+          </div>
+          <div className="metric-grid compact-metrics">
+            <article className="metric-card">
+              <span>Latest implied probability</span>
+              <strong>{chartSeries.latest_probability ? `${Math.round(Number(chartSeries.latest_probability))}%` : "N/A"}</strong>
+            </article>
+            <article className="metric-card">
+              <span>Latest close</span>
+              <strong>{chartSeries.latest_close ? formatPrice(chartSeries.latest_close) : "N/A"}</strong>
+            </article>
+            <article className="metric-card">
+              <span>Window high / low</span>
+              <strong>
+                {chartSeries.high_price && chartSeries.low_price
+                  ? `${formatPrice(chartSeries.high_price)} / ${formatPrice(chartSeries.low_price)}`
+                  : "N/A"}
+              </strong>
+            </article>
+            <article className="metric-card">
+              <span>Window volume</span>
+              <strong>{formatNumber(chartSeries.total_volume)}</strong>
+            </article>
+            <article className="metric-card">
+              <span>Buckets charted</span>
+              <strong>{chartSeries.points.length}</strong>
+            </article>
+          </div>
+        </>
+      )}
+    </section>
+  );
 
   if (!isLoading && !shell) {
     return (
@@ -898,7 +876,10 @@ export const MarketDetailWorkspace = ({ slug }: MarketDetailWorkspaceProps) => {
               ) : null}
             </div>
 
-            <h2 className="market-hero-title">{shell.market.title}</h2>
+            <div className="market-header-identity">
+              <MarketIcon market={shell.market} size={56} />
+              <h2 className="market-hero-title">{shell.market.title}</h2>
+            </div>
             <p className="market-shell-question">{shell.market.question}</p>
 
             <dl className="market-shell-kv">
@@ -1349,6 +1330,8 @@ export const MarketDetailWorkspace = ({ slug }: MarketDetailWorkspaceProps) => {
         </section>
       ) : null}
 
+      {priceChartSection}
+
       {(canDisputeResolution || (resolutionState?.disputes.length ?? 0) > 0) && shell?.market.status !== "settled" ? (
         <section className="auth-section market-dispute-section">
           <h2>Disputes</h2>
@@ -1477,168 +1460,66 @@ export const MarketDetailWorkspace = ({ slug }: MarketDetailWorkspaceProps) => {
         )}
       </section>
 
-      <section className="auth-section market-chart-section">
-        <h2>Price chart</h2>
-        {isHistoryLoading && !history ? (
-          <p>Loading chart...</p>
-        ) : historyError ? (
-          <p>{historyError}</p>
-        ) : chartSeries.points.length === 0 ? (
-          <p>No trade history yet for the selected outcome.</p>
-        ) : (
-          <>
-            <div className="chart-shell">
-              <div className="chart-header">
-                <div className="chart-heading">
-                  <strong>{selectedOutcomeLabel}</strong>
-                  <span className="pill">
-                    {chartSeries.latest_probability ? `${Math.round(Number(chartSeries.latest_probability))}% implied` : "No probability"}
-                  </span>
-                  {history ? <span className="pill">{formatHistoryInterval(history.interval_seconds)}</span> : null}
-                </div>
-                <div className="range-switcher" role="tablist" aria-label="Market history range">
-                  {historyRangeOptions.map((option) => (
-                    <button
-                      aria-selected={option === historyRange}
-                      className={`range-pill ${option === historyRange ? "is-active" : ""}`}
-                      key={option}
-                      onClick={() => setHistoryRange(option)}
-                      type="button"
-                    >
-                      {option}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              <div className="chart-panels">
-                <div className="chart-panel">
-                  <span className="chart-label">Candle buckets</span>
-                  <svg className="chart-svg" viewBox="0 0 360 120" role="img" aria-label="Outcome candle chart">
-                    {chartSeries.points.map((point) => (
-                      <g key={`candle-${point.bucket_key}`}>
-                        <line className="candle-wick" x1={point.x} x2={point.x} y1={point.high_y} y2={point.low_y} />
-                        <rect
-                          className={`candle-body ${point.is_up ? "candle-up" : "candle-down"}`}
-                          height={point.body_height}
-                          rx="3"
-                          width={candleWidth}
-                          x={Math.max(0, point.x - candleWidth / 2)}
-                          y={point.body_y}
-                        />
-                      </g>
-                    ))}
-                  </svg>
-                </div>
-                <div className="chart-panel">
-                  <span className="chart-label">Probability history</span>
-                  <svg className="chart-svg" viewBox="0 0 360 120" role="img" aria-label="Probability history">
-                    <path className="chart-line probability-line" d={chartSeries.probability_path} />
-                    {chartSeries.points.map((point) => (
-                      <circle
-                        className="chart-dot probability-dot"
-                        cx={point.x}
-                        cy={point.probability_y}
-                        key={`probability-${point.bucket_key}`}
-                        r="3"
-                      />
-                    ))}
-                  </svg>
-                </div>
-              </div>
-              <div className="chart-panel">
-                <span className="chart-label">Volume bars</span>
-                <svg className="chart-svg" viewBox="0 0 360 120" role="img" aria-label="Volume bars">
-                  {chartSeries.points.map((point) => (
-                    <rect
-                      className="volume-bar"
-                      key={`volume-${point.bucket_key}`}
-                      x={Math.max(0, point.x - candleWidth / 2)}
-                      y={120 - point.volume_height}
-                      width={candleWidth}
-                      height={point.volume_height}
-                      rx="4"
-                    />
-                  ))}
-                </svg>
-              </div>
-            </div>
-            <div className="metric-grid compact-metrics">
-              <article className="metric-card">
-                <span>Latest implied probability</span>
-                <strong>{chartSeries.latest_probability ? `${Math.round(Number(chartSeries.latest_probability))}%` : "N/A"}</strong>
-              </article>
-              <article className="metric-card">
-                <span>Latest close</span>
-                <strong>{chartSeries.latest_close ? formatPrice(chartSeries.latest_close) : "N/A"}</strong>
-              </article>
-              <article className="metric-card">
-                <span>Window high / low</span>
-                <strong>
-                  {chartSeries.high_price && chartSeries.low_price
-                    ? `${formatPrice(chartSeries.high_price)} / ${formatPrice(chartSeries.low_price)}`
-                    : "N/A"}
-                </strong>
-              </article>
-              <article className="metric-card">
-                <span>Window volume</span>
-                <strong>{formatNumber(chartSeries.total_volume)}</strong>
-              </article>
-              <article className="metric-card">
-                <span>Buckets charted</span>
-                <strong>{chartSeries.points.length}</strong>
-              </article>
-            </div>
-          </>
-        )}
-      </section>
-
       <div className="market-board-grid">
-      <section className="auth-section market-book-section">
-        <h2>Order book</h2>
+      <div className="book-panel market-book-section">
+        <div className="book-col-head">
+          <span>Order book{selectedOrderBook ? ` · ${selectedOrderBook.outcome_label}` : ""}</span>
+          <span>Size</span>
+          <span>Total</span>
+        </div>
         {!selectedOrderBook ? (
-          <p>Select an outcome to inspect the current depth ladder.</p>
+          <p className="book-empty">Select an outcome to see the depth ladder.</p>
         ) : (
           <>
-            <div className="section-topline">
-              <p>{selectedOrderBook.outcome_label} depth across the top five price levels.</p>
-              <span className="pill">Displayed liquidity {formatNumber(selectedStats.displayed_depth)}</span>
+            {cumulativeAsks.length === 0 ? (
+              <p className="book-empty">No resting ask liquidity.</p>
+            ) : (
+              <>
+                {[...cumulativeAsks].reverse().map((level) => {
+                  const pct = maxAskDepth > 0 ? (Number(level.cumulative_quantity) / maxAskDepth) * 100 : 0;
+                  return (
+                    <div className="book-row ask-row" key={`ask-${level.price}`}>
+                      <div className="book-fill ask-fill" style={{ width: `${pct}%` }} />
+                      <span className="book-price ask-price">{formatPrice(level.price)}</span>
+                      <span>{formatNumber(level.quantity)}</span>
+                      <span>{formatNumber(level.cumulative_quantity)}</span>
+                    </div>
+                  );
+                })}
+              </>
+            )}
+            <div className="book-spread-row">
+              <span>Spread</span>
+              <span>
+                {selectedStats.best_ask && selectedStats.best_bid
+                  ? `${Math.round((Number(selectedStats.best_ask) - Number(selectedStats.best_bid)) * 100)}¢`
+                  : "—"}
+              </span>
             </div>
-            <div className="book-grid">
-              <article className="entity-card book-side-card bid-side-card">
-                <div className="entity-card-header">
-                  <strong>Bids</strong>
-                  <span className="pill">best buyers</span>
-                </div>
-                <div className="book-table-head">
-                  <span>Price</span>
-                  <span>Size</span>
-                  <span>Total</span>
-                  <span>Orders</span>
-                </div>
-                {renderDepthLevels(cumulativeBids, "Bid", maxBidDepth)}
-              </article>
-              <article className="entity-card book-side-card ask-side-card">
-                <div className="entity-card-header">
-                  <strong>Asks</strong>
-                  <span className="pill">best sellers</span>
-                </div>
-                <div className="book-table-head">
-                  <span>Price</span>
-                  <span>Size</span>
-                  <span>Total</span>
-                  <span>Orders</span>
-                </div>
-                {renderDepthLevels(cumulativeAsks, "Ask", maxAskDepth)}
-              </article>
-            </div>
+            {cumulativeBids.length === 0 ? (
+              <p className="book-empty">No resting bid liquidity.</p>
+            ) : (
+              <>
+                {cumulativeBids.map((level) => {
+                  const pct = maxBidDepth > 0 ? (Number(level.cumulative_quantity) / maxBidDepth) * 100 : 0;
+                  return (
+                    <div className="book-row bid-row" key={`bid-${level.price}`}>
+                      <div className="book-fill bid-fill" style={{ width: `${pct}%` }} />
+                      <span className="book-price bid-price">{formatPrice(level.price)}</span>
+                      <span>{formatNumber(level.quantity)}</span>
+                      <span>{formatNumber(level.cumulative_quantity)}</span>
+                    </div>
+                  );
+                })}
+              </>
+            )}
           </>
         )}
-      </section>
+      </div>
 
-      <section className="auth-section market-stats-section">
-        <h2>Spread</h2>
+      <div className="market-stats-panel market-stats-section">
         {!selectedQuote ? (
-          <p>Select an outcome above to see spread.</p>
+          <p className="book-empty">Select an outcome above to see stats.</p>
         ) : (
           <>
             <div className="price-rail">
@@ -1674,50 +1555,45 @@ export const MarketDetailWorkspace = ({ slug }: MarketDetailWorkspaceProps) => {
               </article>
               <article className="metric-card">
                 <span>Spread</span>
-                <strong>{selectedStats.spread ? formatPrice(selectedStats.spread) : "No spread yet"}</strong>
+                <strong>{selectedStats.spread ? formatPrice(selectedStats.spread) : "—"}</strong>
               </article>
               <article className="metric-card">
                 <span>Mid-price</span>
-                <strong>{selectedStats.mid_price ? formatPrice(selectedStats.mid_price) : "No midpoint yet"}</strong>
+                <strong>{selectedStats.mid_price ? formatPrice(selectedStats.mid_price) : "—"}</strong>
               </article>
               <article className="metric-card">
-                <span>Displayed depth</span>
+                <span>Depth</span>
                 <strong>{formatNumber(selectedStats.displayed_depth)}</strong>
               </article>
             </div>
           </>
         )}
-      </section>
+      </div>
       </div>
 
       <div className="market-lower-grid">
-      <section className="auth-section market-tape-section">
-        <h2>Trade tape</h2>
-        {!shell ? (
-          <p>Loading trade history...</p>
-        ) : shell.recent_trades.length === 0 ? (
-          <p>No trades yet. Resting orders will appear in the outcome cards above.</p>
+      <div className="trade-tape market-tape-section">
+        <div className="trade-tape-head">
+          <span>Trade tape</span>
+          <span>Price</span>
+          <span>Size</span>
+          <span>Gross</span>
+          <span>Time</span>
+        </div>
+        {!shell || shell.recent_trades.length === 0 ? (
+          <p className="book-empty">{!shell ? "Loading..." : "No trades yet."}</p>
         ) : (
-          <div className="trade-tape">
-            <div className="trade-tape-head">
-              <span>Outcome</span>
-              <span>Price</span>
-              <span>Size</span>
-              <span>Gross</span>
-              <span>Time</span>
-            </div>
-            {shell.recent_trades.map((trade) => (
-              <article className="trade-tape-row" key={trade.id}>
-                <strong>{trade.outcome_label}</strong>
-                <span>{formatPrice(trade.price)}</span>
-                <span>{formatNumber(trade.quantity)} qty</span>
-                <span>{formatNumber(trade.gross_notional)} gross</span>
-                <span>{formatTradeTime(trade.executed_at)}</span>
-              </article>
-            ))}
-          </div>
+          shell.recent_trades.map((trade) => (
+            <article className="trade-tape-row" key={trade.id}>
+              <strong>{trade.outcome_label}</strong>
+              <span>{formatPrice(trade.price)}</span>
+              <span>{formatNumber(trade.quantity)}</span>
+              <span>{formatNumber(trade.gross_notional)}</span>
+              <span>{formatTradeTime(trade.executed_at)}</span>
+            </article>
+          ))
         )}
-      </section>
+      </div>
 
       <section className="auth-section market-orders-section">
         <h2>Your orders</h2>
@@ -1800,162 +1676,266 @@ export const MarketDetailWorkspace = ({ slug }: MarketDetailWorkspaceProps) => {
 
       <aside className="market-detail-sidebar">
       <section className="auth-section market-ticket-section">
-        <h2>Place order</h2>
-        <p className="ticket-intro">Limit orders only. Set your price and quantity — your order rests on the book until matched.</p>
-        <form
-          className="auth-form"
-          onSubmit={(event) => {
-            event.preventDefault();
-            if (!session || !selectedQuote) {
-              return;
-            }
 
-            void runAction(
-              `Submitting ${side} order for ${selectedOutcomeLabel}...`,
-              async () => {
-                try {
-                  setOrderErrorHint("");
-                  const accessToken = await getAccessToken();
-                  const payload: MarketOrderCreateInput = {
-                    outcome_id: selectedQuote.outcome_id,
-                    side,
-                    order_type: "limit",
-                    quantity,
-                    price
-                  };
-                  const createdOrder = await beyulApiFetch<MarketOrder>(`/api/v1/markets/${slug}/orders`, {
-                    method: "POST",
-                    accessToken,
-                    json: payload
-                  });
-                  await refreshShellAndOrders();
-                  return createdOrder;
-                } catch (error) {
-                  const message = error instanceof Error ? error.message : "Order submission failed.";
-                  setOrderErrorHint(getOrderConflictHint(message, shell?.market.status));
-                  throw error;
-                }
-              },
-              {
-                successMessage: (order) =>
-                  `Order accepted: ${order.side.toUpperCase()} ${order.quantity} ${order.outcome_label} at ${formatPrice(order.price)}.`
-              }
+        {/* ── Buy / Sell toggle ── */}
+        <div className="simple-ticket-tabs">
+          <button
+            className={side === "buy" ? "is-active buy" : "buy"}
+            type="button"
+            onClick={() => setSide("buy")}
+          >Buy</button>
+          <button
+            className={side === "sell" ? "is-active sell" : "sell"}
+            type="button"
+            onClick={() => setSide("sell")}
+          >Sell</button>
+        </div>
+
+        {/* ── Outcome selector ── */}
+        <div className="market-outcome-strip">
+          {(shell?.quotes ?? []).map((quote) => {
+            const isActive = quote.outcome_id === (selectedQuote?.outcome_id ?? shell?.quotes[0]?.outcome_id);
+            const p = side === "buy"
+              ? (getOutcomeMicroStats(quote, shell?.order_books.find(b => b.outcome_id === quote.outcome_id) ?? null).best_ask ?? quote.last_price)
+              : (getOutcomeMicroStats(quote, shell?.order_books.find(b => b.outcome_id === quote.outcome_id) ?? null).best_bid ?? quote.last_price);
+            const pct = p ? Math.round(Number(p) * 100) : null;
+            return (
+              <button
+                key={quote.outcome_id}
+                className={`outcome-btn ${isActive ? "is-active" : ""}`}
+                type="button"
+                onClick={() => setSelectedOutcomeId(quote.outcome_id)}
+              >
+                <span className="outcome-btn-label">{quote.outcome_label}</span>
+                <span className="outcome-btn-price">{pct !== null ? `${pct}¢` : "—"}</span>
+              </button>
             );
-          }}
-        >
-          <div className="ticket-grid">
-            <div className="field">
-              <label htmlFor="market-outcome">Outcome</label>
-              <select
-                className="select-field"
-                id="market-outcome"
-                value={selectedOutcomeId}
-                onChange={(event) => setSelectedOutcomeId(event.target.value)}
+          })}
+        </div>
+
+        {!session ? (
+          <div className="simple-ticket-unauth">
+            <p>Sign in to trade on this market.</p>
+            <a className="button-primary simple-ticket-cta" href="/auth/sign-in">Sign in to trade</a>
+          </div>
+        ) : !canPlaceOrders ? (
+          <div className="simple-ticket-unauth">
+            <p>Orders are disabled while the market is <strong>{shell?.market.status}</strong>.</p>
+          </div>
+        ) : (
+          <>
+            <div className="ticket-order-mode">
+              <span className="ticket-order-mode-label">Order type</span>
+              <div className="ticket-order-mode-controls">
+                <button
+                  type="button"
+                  className={`ticket-order-mode-pill ${orderEntryMode === "market" ? "is-active" : ""}`}
+                  onClick={() => setOrderEntryMode("market")}
+                >
+                  Market
+                </button>
+                <button
+                  type="button"
+                  className={`ticket-order-mode-pill ${orderEntryMode === "limit" ? "is-active" : ""}`}
+                  onClick={() => setOrderEntryMode("limit")}
+                >
+                  Limit
+                </button>
+              </div>
+            </div>
+
+            {orderEntryMode === "market" ? (
+              <>
+                <div className="field">
+                  <label htmlFor="simple-amount">Amount</label>
+                  <div className="amount-input-wrap">
+                    <span>$</span>
+                    <input
+                      id="simple-amount"
+                      inputMode="decimal"
+                      placeholder="25"
+                      value={amount}
+                      onChange={(e) => setAmount(e.target.value)}
+                    />
+                  </div>
+                </div>
+                <div className="simple-ticket-preview">
+                  <div>
+                    <span>Shares you get</span>
+                    <strong>{autoShares > 0 ? autoShares.toFixed(2) : "—"}</strong>
+                  </div>
+                  <div>
+                    <span>Price per share</span>
+                    <strong>{autoPrice ? `${Math.round(Number(autoPrice) * 100)}¢` : "—"}</strong>
+                  </div>
+                  <div>
+                    <span>Payout if {selectedOutcomeLabel}</span>
+                    <strong>{autoPayout > 0 ? `$${autoPayout.toFixed(2)}` : "—"}</strong>
+                  </div>
+                </div>
+                {!hasLiquidity ? (
+                  <p className="field-hint">
+                    No liquidity for market execution right now.
+                    {" "}
+                    <button type="button" className="inline-link-button" onClick={() => setOrderEntryMode("limit")}>
+                      Switch to limit order
+                    </button>
+                    .
+                  </p>
+                ) : null}
+                <button
+                  className="button-primary simple-ticket-cta"
+                  type="button"
+                  disabled={isSubmitting || !selectedQuote || !hasLiquidity || autoShares < 0.01}
+                  onClick={() => {
+                    if (!session || !selectedQuote) return;
+                    void runAction(
+                      `${side === "buy" ? "Buying" : "Selling"} ${selectedOutcomeLabel}...`,
+                      async () => {
+                        try {
+                          setOrderErrorHint("");
+                          const accessToken = await getAccessToken();
+                          const payload: MarketOrderCreateInput = {
+                            outcome_id: selectedQuote.outcome_id,
+                            side,
+                            order_type: "limit",
+                            quantity: autoShares.toFixed(4),
+                            price: autoPrice
+                          };
+                          const createdOrder = await beyulApiFetch<MarketOrder>(`/api/v1/markets/${slug}/orders`, {
+                            method: "POST",
+                            accessToken,
+                            json: payload
+                          });
+                          await refreshShellAndOrders();
+                          return createdOrder;
+                        } catch (error) {
+                          const message = error instanceof Error ? error.message : "Order submission failed.";
+                          setOrderErrorHint(getOrderConflictHint(message, shell?.market.status));
+                          throw error;
+                        }
+                      },
+                      {
+                        successMessage: (order) =>
+                          `${order.side === "buy" ? "Bought" : "Sold"} ${order.quantity} ${order.outcome_label} at ${formatPrice(order.price)}.`
+                      }
+                    );
+                  }}
+                >
+                  {side === "buy" ? `Buy ${selectedOutcomeLabel}` : `Sell ${selectedOutcomeLabel}`}
+                  {autoPrice ? ` · ${Math.round(Number(autoPrice) * 100)}¢` : ""}
+                </button>
+              </>
+            ) : (
+              <form
+                className="auth-form"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  if (!session || !selectedQuote) return;
+                  void runAction(
+                    `Submitting ${side} limit order for ${selectedOutcomeLabel}...`,
+                    async () => {
+                      try {
+                        setOrderErrorHint("");
+                        const accessToken = await getAccessToken();
+                        const payload: MarketOrderCreateInput = {
+                          outcome_id: selectedQuote.outcome_id,
+                          side,
+                          order_type: "limit",
+                          quantity,
+                          price
+                        };
+                        const createdOrder = await beyulApiFetch<MarketOrder>(`/api/v1/markets/${slug}/orders`, {
+                          method: "POST",
+                          accessToken,
+                          json: payload
+                        });
+                        await refreshShellAndOrders();
+                        return createdOrder;
+                      } catch (error) {
+                        const message = error instanceof Error ? error.message : "Order submission failed.";
+                        setOrderErrorHint(getOrderConflictHint(message, shell?.market.status));
+                        throw error;
+                      }
+                    },
+                    {
+                      successMessage: (order) =>
+                        `Order accepted: ${order.side.toUpperCase()} ${order.quantity} ${order.outcome_label} at ${formatPrice(order.price)}.`
+                    }
+                  );
+                }}
               >
-                {(shell?.quotes ?? []).map((quote) => (
-                  <option key={quote.outcome_id} value={quote.outcome_id}>
-                    {quote.outcome_label}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="field">
-              <label htmlFor="market-side">Side</label>
-              <select
-                className="select-field"
-                id="market-side"
-                value={side}
-                onChange={(event) => setSide(event.target.value as "buy" | "sell")}
-              >
-                <option value="buy">Buy</option>
-                <option value="sell">Sell</option>
-              </select>
-            </div>
-            <div className="field">
-              <label htmlFor="market-quantity">Quantity</label>
-              <input
-                id="market-quantity"
-                inputMode="decimal"
-                placeholder="25"
-                value={quantity}
-                onChange={(event) => setQuantity(event.target.value)}
-              />
-            </div>
-            <div className="field">
-              <label htmlFor="market-price">Limit price</label>
-              <input
-                id="market-price"
-                inputMode="decimal"
-                placeholder="0.55"
-                value={price}
-                onChange={(event) => setPrice(event.target.value)}
-              />
-            </div>
-          </div>
-          <div className="ticket-summary">
-            <div className="ticket-primary-stat">
-              <span>Collateral</span>
-              <strong>{orderPreview.collateral ? formatNumber(orderPreview.collateral) : "Complete the ticket"}</strong>
-            </div>
-            <div className="ticket-summary-grid">
-              <article className="metric-card">
-                <span>Selected outcome</span>
-                <strong>{selectedOutcomeLabel}</strong>
-              </article>
-              <article className="metric-card">
-                <span>Exposure</span>
-                <strong>{formatOrderLabel(side, selectedOutcomeLabel)}</strong>
-              </article>
-              <article className="metric-card">
-                <span>Immediate fill</span>
-                <strong>{formatNumber(orderPreview.immediate_quantity)}</strong>
-              </article>
-              <article className="metric-card">
-                <span>Would rest</span>
-                <strong>{formatNumber(orderPreview.resting_quantity)}</strong>
-              </article>
-            </div>
-          </div>
-          <p className="ticket-explainer">
-            {side === "buy"
-              ? "Buying takes the named outcome directly."
-              : "Selling the named outcome takes the complementary side in a binary market."}
-          </p>
-          <div className="metric-grid compact-metrics">
-            <article className="metric-card">
-              <span>Avg execution</span>
-              <strong>
-                {orderPreview.average_execution_price ? formatPrice(orderPreview.average_execution_price) : "No immediate match"}
-              </strong>
-            </article>
-            <article className="metric-card">
-              <span>Worst executable</span>
-              <strong>
-                {orderPreview.worst_execution_price ? formatPrice(orderPreview.worst_execution_price) : "No immediate match"}
-              </strong>
-            </article>
-            <article className="metric-card">
-              <span>Matched gross</span>
-              <strong>{orderPreview.gross_notional ? formatNumber(orderPreview.gross_notional) : "0"}</strong>
-            </article>
-          </div>
-          <div className="execution-preview-bar" aria-label="Execution preview">
-            <div className="execution-preview-fill" style={{ width: `${immediateFillPercent}%` }} />
-          </div>
-          <p className="ticket-explainer">
-            {immediateFillPercent > 0
-              ? `${Math.round(immediateFillPercent)}% of this order would cross immediately at current depth.`
-              : "This ticket would rest on the book at the current price."}
-          </p>
-          <div className="button-row">
-            <button className="button-primary" disabled={isSubmitting || !session || !selectedQuote || !canPlaceOrders} type="submit">
-              Place limit order
-            </button>
-          </div>
-          {orderErrorHint ? <p className="field-hint">{orderErrorHint}</p> : null}
-          {shell && !canPlaceOrders ? <p>Orders are disabled while the market is {shell.market.status}.</p> : null}
-          {!session ? <p>Sign in to place orders and see your own ticket history.</p> : null}
-        </form>
+                <div className="ticket-grid">
+                  <div className="field">
+                    <label htmlFor="adv-outcome">Outcome</label>
+                    <select
+                      className="select-field"
+                      id="adv-outcome"
+                      value={selectedOutcomeId}
+                      onChange={(event) => setSelectedOutcomeId(event.target.value)}
+                    >
+                      {(shell?.quotes ?? []).map((quote) => (
+                        <option key={quote.outcome_id} value={quote.outcome_id}>
+                          {quote.outcome_label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="field">
+                    <label htmlFor="adv-side">Side</label>
+                    <select
+                      className="select-field"
+                      id="adv-side"
+                      value={side}
+                      onChange={(event) => setSide(event.target.value as "buy" | "sell")}
+                    >
+                      <option value="buy">Buy</option>
+                      <option value="sell">Sell</option>
+                    </select>
+                  </div>
+                  <div className="field">
+                    <label htmlFor="adv-quantity">Quantity (shares)</label>
+                    <input
+                      id="adv-quantity"
+                      inputMode="decimal"
+                      placeholder="25"
+                      value={quantity}
+                      onChange={(event) => setQuantity(event.target.value)}
+                    />
+                  </div>
+                  <div className="field">
+                    <label htmlFor="adv-price">Limit price</label>
+                    <input
+                      id="adv-price"
+                      inputMode="decimal"
+                      placeholder="0.55"
+                      value={price}
+                      onChange={(event) => setPrice(event.target.value)}
+                    />
+                  </div>
+                </div>
+                <div className="execution-preview-bar" aria-label="Execution preview">
+                  <div className="execution-preview-fill" style={{ width: `${immediateFillPercent}%` }} />
+                </div>
+                <p className="ticket-explainer">
+                  {immediateFillPercent > 0
+                    ? `${Math.round(immediateFillPercent)}% would fill immediately.`
+                    : "This order rests on the book at this price."}
+                </p>
+                <div className="button-row">
+                  <button
+                    className="button-primary"
+                    disabled={isSubmitting || !session || !selectedQuote || !canPlaceOrders}
+                    type="submit"
+                  >
+                    Place limit order
+                  </button>
+                </div>
+              </form>
+            )}
+            {orderErrorHint ? <p className="field-hint">{orderErrorHint}</p> : null}
+          </>
+        )}
       </section>
 
       <section className="auth-section market-exposure-section">
@@ -2106,11 +2086,17 @@ export const MarketDetailWorkspace = ({ slug }: MarketDetailWorkspaceProps) => {
             </div>
             <div>
               <dt>Platform fee</dt>
-              <dd>{shell.market.platform_fee_bps ?? 0} bps</dd>
+              <dd>{shell.market.platform_fee_bps ?? 0} bps ({((shell.market.platform_fee_bps ?? 0) / 100).toFixed(1)}%)</dd>
             </div>
             <div>
               <dt>Creator fee</dt>
-              <dd>{shell.market.creator_fee_bps ?? 0} bps</dd>
+              <dd>{shell.market.creator_fee_bps ?? 0} bps ({((shell.market.creator_fee_bps ?? 0) / 100).toFixed(1)}%)</dd>
+            </div>
+            <div>
+              <dt>Creator rewards</dt>
+              <dd>
+                <a href="/creators" className="market-creator-reward-link">View tier schedule →</a>
+              </dd>
             </div>
           </dl>
         ) : (

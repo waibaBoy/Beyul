@@ -4,8 +4,36 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { AuthFeedback } from "@/components/auth/auth-feedback";
 import { useAuthAction } from "@/components/auth/use-auth-action";
+import { MarketIcon } from "@/components/app/market-icon";
 import { beyulApiFetch } from "@/lib/api/beyul-api";
 import type { Market } from "@/lib/api/types";
+
+const formatVolume = (value: string) => {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) return "—";
+  if (parsed >= 1_000_000) return `$${(parsed / 1_000_000).toFixed(1)}M`;
+  if (parsed >= 1_000) return `$${Math.round(parsed / 1_000)}k`;
+  return `$${Math.round(parsed)}`;
+};
+
+const formatPricePercent = (value: string | null): string => {
+  if (!value) return "—";
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return "—";
+  return `${Math.round(parsed * 100)}%`;
+};
+
+const formatCountdown = (value: string | null): string | null => {
+  if (!value) return null;
+  const diffMs = new Date(value).getTime() - Date.now();
+  if (!Number.isFinite(diffMs) || diffMs <= 0) return null;
+  const totalMinutes = Math.floor(diffMs / 60000);
+  const days = Math.floor(totalMinutes / (60 * 24));
+  const hours = Math.floor((totalMinutes % (60 * 24)) / 60);
+  if (days > 0) return `${days}d left`;
+  if (hours > 0) return `${hours}h left`;
+  return `${totalMinutes}m left`;
+};
 
 export const MarketsWorkspace = () => {
   const [markets, setMarkets] = useState<Market[]>([]);
@@ -104,16 +132,35 @@ export const MarketsWorkspace = () => {
         <div className="markets-layout">
           {featuredMarket ? (
             <article className="entity-card market-feature-card">
-              <div className="entity-card-header">
-                <strong>Featured market</strong>
+              <div className="market-feature-head">
+                <div className="market-feature-label">
+                  <MarketIcon market={featuredMarket} size={52} />
+                  <div>
+                    <p className="market-feature-kicker">Featured market</p>
+                    <strong>{featuredMarket.title}</strong>
+                  </div>
+                </div>
                 <span className="pill">{featuredMarket.status}</span>
               </div>
-              <h3>{featuredMarket.title}</h3>
               <p>{featuredMarket.question}</p>
               <div className="market-summary-meta">
                 <span className="market-meta-chip">{featuredMarket.community_name || "Standalone"}</span>
                 <span className="market-meta-chip">{featuredMarket.rail_mode}</span>
                 <span className="market-meta-chip">{featuredMarket.resolution_mode}</span>
+              </div>
+              <div className="market-signal-strip">
+                <div className="market-signal-item">
+                  <span>Yes price</span>
+                  <strong>{formatPricePercent(featuredMarket.last_price)}</strong>
+                </div>
+                <div className="market-signal-item">
+                  <span>Volume</span>
+                  <strong>{formatVolume(featuredMarket.traded_volume)}</strong>
+                </div>
+                <div className="market-signal-item">
+                  <span>Closes</span>
+                  <strong>{formatCountdown(featuredMarket.timing.trading_closes_at) ?? "Open"}</strong>
+                </div>
               </div>
               <dl className="kv-list compact market-feature-kv">
                 <div>
@@ -141,14 +188,18 @@ export const MarketsWorkspace = () => {
             {remainingMarkets.map((market) => (
               <article className="entity-card market-row-card" key={market.id}>
                 <div className="market-row-main">
-                  <div className="entity-card-header">
-                    <strong>{market.title}</strong>
+                  <div className="market-row-head">
+                    <div className="market-row-title-wrap">
+                      <MarketIcon market={market} size={42} />
+                      <strong>{market.title}</strong>
+                    </div>
                     <span className="pill">{market.status}</span>
                   </div>
                   <p>{market.question}</p>
                   <div className="market-summary-meta">
                     <span className="market-meta-chip">{market.community_name || "Standalone"}</span>
                     <span className="market-meta-chip">{market.rail_mode}</span>
+                    <span className="market-meta-chip">{formatPricePercent(market.last_price)} YES</span>
                   </div>
                 </div>
                 <dl className="kv-list compact market-row-kv">
@@ -159,6 +210,10 @@ export const MarketsWorkspace = () => {
                   <div>
                     <dt>Outcomes</dt>
                     <dd>{market.outcomes.map((outcome) => outcome.label).join(", ")}</dd>
+                  </div>
+                  <div>
+                    <dt>Volume</dt>
+                    <dd>{formatVolume(market.traded_volume)}</dd>
                   </div>
                 </dl>
                 <div className="button-row market-row-actions">

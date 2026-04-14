@@ -1,10 +1,26 @@
-import type { Metadata } from "next";
-import { Inter } from "next/font/google";
+import type { Metadata, Viewport } from "next";
+import { Geist, Geist_Mono } from "next/font/google";
 import { AuthProvider } from "@/components/auth/auth-provider";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import "./globals.css";
 
-const inter = Inter({ subsets: ["latin"], display: "swap" });
+const geist = Geist({
+  subsets: ["latin"],
+  display: "swap",
+  variable: "--font-sans"
+});
+
+const geistMono = Geist_Mono({
+  subsets: ["latin"],
+  display: "swap",
+  variable: "--font-mono"
+});
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 1
+};
 
 export const metadata: Metadata = {
   title: "Satta",
@@ -23,7 +39,7 @@ export default async function RootLayout({
 
   return (
     <html lang="en" suppressHydrationWarning>
-      <body className={inter.className} suppressHydrationWarning>
+      <body className={`${geist.variable} ${geistMono.variable}`} suppressHydrationWarning>
         <AuthProvider initialAccessToken={null} initialUser={user ?? null}>
           {children}
         </AuthProvider>

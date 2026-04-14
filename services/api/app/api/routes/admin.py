@@ -2,13 +2,25 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from app.api.deps import CurrentActor, get_admin_service, get_current_actor, get_portfolio_service
+from app.api.deps import CurrentActor, get_admin_service, get_current_actor, get_market_quality_service, get_portfolio_service
 from app.core.exceptions import ConflictError, ForbiddenError, NotFoundError
-from app.schemas.admin import OracleApprovalRequest, OracleApprovalResponse, OracleLiveReadinessResponse, ReviewQueueResponse
+from app.schemas.admin import (
+    OracleApprovalRequest,
+    OracleApprovalResponse,
+    OracleLiveReadinessResponse,
+    SettlementAutomationRunRequest,
+    SettlementAutomationRunResponse,
+    SettlementQueueResponse,
+    RollingUpDownRunRequest,
+    RollingUpDownRunResponse,
+    ReviewQueueResponse,
+)
 from app.schemas.common import ReviewDecisionRequest
 from app.schemas.market import MarketResponse
+from app.schemas.market_quality import ModerationSlaReportResponse, ModerationSlaItemResponse
 from app.schemas.portfolio import AdminFundBalanceRequest, MarketResolutionResponse, MarketSettlementFinalizeRequest, PortfolioSummaryResponse
 from app.services.admin_service import AdminService
+from app.services.market_quality_service import MarketQualityService, MODERATION_SLA_HOURS
 from app.services.portfolio_service import PortfolioService
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -98,3 +110,55 @@ async def settle_market(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
     except ConflictError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
+
+
+@router.post("/rolling/up-down/run", response_model=RollingUpDownRunResponse)
+async def run_rolling_up_down_cycle(
+    payload: RollingUpDownRunRequest,
+    actor: CurrentActor = Depends(get_current_actor),
+    service: AdminService = Depends(get_admin_service),
+) -> RollingUpDownRunResponse:
+    try:
+        return await service.run_rolling_up_down(actor, payload)
+    except ForbiddenError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc))
+    except ConflictError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
+
+
+@router.get("/settlement/queue", response_model=SettlementQueueResponse)
+async def get_settlement_queue(
+    actor: CurrentActor = Depends(get_current_actor),
+    service: AdminService = Depends(get_admin_service),
+) -> SettlementQueueResponse:
+    try:
+        return await service.get_settlement_queue(actor)
+    except ForbiddenError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc))
+
+
+@router.post("/settlement/run", response_model=SettlementAutomationRunResponse)
+async def run_settlement_automation(
+    payload: SettlementAutomationRunRequest,
+    actor: CurrentActor = Depends(get_current_actor),
+    service: AdminService = Depends(get_admin_service),
+) -> SettlementAutomationRunResponse:
+    try:
+        return await service.run_settlement_automation(actor, payload)
+    except ForbiddenError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc))
+
+
+@router.get("/moderation/sla", response_model=ModerationSlaReportResponse)
+async def get_moderation_sla_report(
+    actor: CurrentActor = Depends(get_current_actor),
+    quality_service: MarketQualityService = Depends(get_market_quality_service),
+) -> ModerationSlaReportResponse:
+    if not actor.is_admin:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access is required")
+    items = await quality_service.get_moderation_sla_report()
+    return ModerationSlaReportResponse(
+        sla_hours=MODERATION_SLA_HOURS,
+        breached_items=[ModerationSlaItemResponse(**item) for item in items],
+        total_breached=len(items),
+    )

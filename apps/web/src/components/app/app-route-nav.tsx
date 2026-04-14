@@ -9,19 +9,25 @@ import {
   MARKET_DISCOVERY_CATEGORIES,
   isMarketDiscoveryCategory
 } from "@/lib/markets/discovery";
+import { NotificationBell } from "@/components/app/notification-bell";
 import { SearchModal } from "@/components/app/search-modal";
 
 const primaryLinks = [
   { href: "/markets", label: "Markets" },
   { href: "/portfolio", label: "Portfolio" },
-  { href: "/communities", label: "Communities" }
+  { href: "/communities", label: "Communities" },
+  { href: "/about", label: "About" }
 ];
 
 const menuLinks = [
   { href: "/communities", label: "Communities" },
   { href: "/markets", label: "Markets" },
   { href: "/portfolio", label: "Portfolio" },
-  { href: "/market-requests", label: "Propose a market" }
+  { href: "/creators", label: "Creator dashboard" },
+  { href: "/leaderboard", label: "Leaderboard" },
+  { href: "/market-requests", label: "Propose a market" },
+  { href: "/ops", label: "Operations" },
+  { href: "/about", label: "About Satta" }
 ];
 
 const isActiveRoute = (pathname: string, href: string) => pathname === href || pathname.startsWith(`${href}/`);
@@ -103,6 +109,8 @@ export const AppRouteNav = () => {
           >
             + Create Market
           </Link>
+
+          <NotificationBell />
 
           <div className="topnav-account-menu" ref={menuRef}>
             <button

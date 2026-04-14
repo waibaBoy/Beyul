@@ -37,6 +37,7 @@ type AnyResult = PageResult | MarketResult | CommunityResult;
 
 const PAGE_RESULTS: PageResult[] = [
   { kind: "page", id: "home", label: "Home", description: "Trending markets and discovery", href: "/", tag: "Page" },
+  { kind: "page", id: "about", label: "About Satta", description: "Fees, creators, how bets work", href: "/about", tag: "Page" },
   { kind: "page", id: "markets", label: "Markets", description: "Browse all open markets", href: "/markets", tag: "Page" },
   { kind: "page", id: "create", label: "Create a market", description: "Propose a new bet or prediction", href: "/market-requests", tag: "Page" },
   { kind: "page", id: "portfolio", label: "My portfolio", description: "Your positions, balances and orders", href: "/portfolio", tag: "Page" },
@@ -44,6 +45,7 @@ const PAGE_RESULTS: PageResult[] = [
   { kind: "page", id: "sign-in", label: "Sign in", description: "Log into your account", href: "/auth/sign-in", tag: "Auth" },
   { kind: "page", id: "sign-up", label: "Create account", description: "Register for free", href: "/auth/sign-up", tag: "Auth" },
   { kind: "page", id: "account", label: "Account settings", description: "Manage your profile and session", href: "/auth/account", tag: "Settings" },
+  { kind: "page", id: "creators", label: "Creator dashboard", description: "Stats, reward tiers, and leaderboard", href: "/creators", tag: "Page" },
   { kind: "page", id: "admin", label: "Admin review", description: "Moderate posts and market requests", href: "/admin/review", tag: "Admin" }
 ];
 

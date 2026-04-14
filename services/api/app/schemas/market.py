@@ -84,6 +84,7 @@ class MarketResponse(BaseModel):
     created_from_request_id: UUID | None = None
     creator_id: UUID
     settlement_source_id: UUID
+    image_url: str | None = None
     settlement_reference_url: str | None = None
     settlement_reference_label: str | None = None
     settlement_source: MarketSettlementSourceResponse | None = None
@@ -135,6 +136,7 @@ class MarketTradeResponse(BaseModel):
     price: str
     quantity: str
     gross_notional: str
+    fee_amount: str = "0"
     executed_at: datetime
 
 

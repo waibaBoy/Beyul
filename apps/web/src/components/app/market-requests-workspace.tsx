@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { beyulApiFetch } from "@/lib/api/beyul-api";
 import type { Community, MarketRequest, MarketRequestCreateInput, MarketTemplateKey } from "@/lib/api/types";
 import {
@@ -12,6 +12,7 @@ import {
   type TemplateBuilderInput
 } from "@/lib/markets/request-templates";
 import { normalizeSlug } from "@/lib/slug";
+import { getSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { useAuth } from "@/components/auth/auth-provider";
 import { AuthFeedback } from "@/components/auth/auth-feedback";
 import { useAuthAction } from "@/components/auth/use-auth-action";
@@ -42,6 +43,9 @@ const defaultTemplateBuilder: TemplateBuilderInput = {
   contractNotes: ""
 };
 
+const ALLOWED_IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/gif"]);
+const MAX_IMAGE_UPLOAD_BYTES = 5 * 1024 * 1024;
+
 export const MarketRequestsWorkspace = () => {
   const { getAccessToken, session } = useAuth();
   const [requests, setRequests] = useState<MarketRequest[]>([]);
@@ -54,10 +58,86 @@ export const MarketRequestsWorkspace = () => {
   const { errorMessage, isSubmitting, runAction, statusMessage, setStatusMessage } = useAuthAction(
     "Create and review your live market requests."
   );
+  const [imageUploading, setImageUploading] = useState(false);
+  const [multiOutcome, setMultiOutcome] = useState(false);
+  const [customOutcomes, setCustomOutcomes] = useState<string[]>(["", ""]);
   const selectedTemplate = marketTemplateDefinitionByKey[templateBuilder.templateKey];
   const templateDraft = getTemplateDraft(templateBuilder);
   const templateValidation = validateTemplateBuilder(templateBuilder);
   const hasTemplateErrors = Object.keys(templateValidation.fieldErrors).length > 0;
+
+  type QualityWarning = { code: string; severity: string; message: string };
+  type DuplicateMatch = { source: string; slug: string | null; title: string; status: string; match_type: string; similarity?: number };
+  const [qualityWarnings, setQualityWarnings] = useState<QualityWarning[]>([]);
+  const [duplicateMatches, setDuplicateMatches] = useState<DuplicateMatch[]>([]);
+  const [qualityBlocked, setQualityBlocked] = useState<string | null>(null);
+  const qualityTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const runQualityCheck = useCallback(async (title: string, question: string) => {
+    if (!title || title.length < 5 || !question || question.length < 5) {
+      setQualityWarnings([]);
+      setDuplicateMatches([]);
+      setQualityBlocked(null);
+      return;
+    }
+    try {
+      const accessToken = await getAccessToken();
+      if (!accessToken) return;
+      const result = await beyulApiFetch<{
+        blocked: boolean;
+        block_reason: string | null;
+        warnings: QualityWarning[];
+        duplicate_matches: DuplicateMatch[];
+      }>("/api/v1/market-requests/quality-check", {
+        method: "POST",
+        accessToken,
+        json: {
+          title,
+          question,
+          market_access_mode: form.market_access_mode || "public",
+          resolution_mode: form.resolution_mode || "oracle",
+        },
+      });
+      setQualityWarnings(result.warnings);
+      setDuplicateMatches(result.duplicate_matches);
+      setQualityBlocked(result.blocked ? result.block_reason : null);
+    } catch {
+      // silent
+    }
+  }, [getAccessToken, form.market_access_mode, form.resolution_mode]);
+
+  useEffect(() => {
+    if (qualityTimerRef.current) clearTimeout(qualityTimerRef.current);
+    qualityTimerRef.current = setTimeout(() => {
+      void runQualityCheck(form.title, form.question);
+    }, 800);
+    return () => { if (qualityTimerRef.current) clearTimeout(qualityTimerRef.current); };
+  }, [form.title, form.question, runQualityCheck]);
+
+  const handleImageUpload = async (file: File) => {
+    if (!ALLOWED_IMAGE_TYPES.has(file.type)) {
+      setStatusMessage("Unsupported image type. Use PNG, JPEG, WEBP, or GIF.");
+      return;
+    }
+    if (file.size > MAX_IMAGE_UPLOAD_BYTES) {
+      setStatusMessage("Image is too large. Maximum size is 5MB.");
+      return;
+    }
+    setImageUploading(true);
+    try {
+      const supabase = getSupabaseBrowserClient();
+      const ext = file.name.split(".").pop() ?? "png";
+      const path = `${Date.now()}.${ext}`;
+      const { data, error } = await supabase.storage.from("market-images").upload(path, file, { upsert: true });
+      if (error || !data) throw error ?? new Error("Upload failed");
+      const { data: urlData } = supabase.storage.from("market-images").getPublicUrl(data.path);
+      setForm((current) => ({ ...current, image_url: urlData.publicUrl }));
+    } catch {
+      // silent — field stays empty
+    } finally {
+      setImageUploading(false);
+    }
+  };
 
   const applyTemplateDraft = (nextBuilder: TemplateBuilderInput) => {
     const draft = getTemplateDraft(nextBuilder);
@@ -156,7 +236,10 @@ export const MarketRequestsWorkspace = () => {
                     template_key: templateBuilder.templateKey,
                     template_config: templateDraft.templateConfig,
                     description: form.description || undefined,
-                    community_id: form.community_id || undefined
+                    community_id: form.community_id || undefined,
+                    custom_outcomes: multiOutcome && customOutcomes.filter((o) => o.trim()).length >= 2
+                      ? customOutcomes.filter((o) => o.trim())
+                      : undefined
                   }
                 });
                 setRequests((current) => [created, ...current]);
@@ -164,6 +247,8 @@ export const MarketRequestsWorkspace = () => {
                 setTemplateBuilder(defaultTemplateBuilder);
                 setCustomizeCopy(false);
                 setShowAdvancedReference(false);
+                setMultiOutcome(false);
+                setCustomOutcomes(["", ""]);
                 applyTemplateDraft(defaultTemplateBuilder);
                 return created;
               },
@@ -392,6 +477,37 @@ export const MarketRequestsWorkspace = () => {
             </>
           ) : null}
           <div className="field">
+            <label htmlFor="request-image">Market image <span className="field-hint-inline">(optional)</span></label>
+            <div className="image-upload-row">
+              {form.image_url && (
+                <img className="market-icon" src={form.image_url} alt="Preview" width={48} height={48} />
+              )}
+              <label className="image-upload-btn" htmlFor="request-image-file">
+                {imageUploading ? "Uploading…" : form.image_url ? "Change image" : "Upload image"}
+              </label>
+              <input
+                id="request-image-file"
+                type="file"
+                accept="image/png,image/jpeg,image/webp,image/gif"
+                style={{ display: "none" }}
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) void handleImageUpload(file);
+                }}
+              />
+              {form.image_url && (
+                <button
+                  type="button"
+                  className="image-upload-clear"
+                  onClick={() => setForm((current) => ({ ...current, image_url: undefined }))}
+                >
+                  Remove
+                </button>
+              )}
+            </div>
+            <p className="field-hint">PNG, JPG or WebP. Shown as a circle icon on market cards.</p>
+          </div>
+          <div className="field">
             <label htmlFor="request-community">Community</label>
             <select
               id="request-community"
@@ -459,8 +575,96 @@ export const MarketRequestsWorkspace = () => {
               <option value="council">Council</option>
             </select>
           </div>
+          <div className="field">
+            <label>
+              <input
+                checked={multiOutcome}
+                onChange={(event) => {
+                  setMultiOutcome(event.target.checked);
+                  if (!event.target.checked) setCustomOutcomes(["", ""]);
+                }}
+                type="checkbox"
+              />{" "}
+              Multi-outcome market
+            </label>
+            <p className="field-hint">Enable to define custom outcome labels instead of the default Yes/No.</p>
+          </div>
+          {multiOutcome ? (
+            <div className="field">
+              <label>Outcome labels <span className="field-hint-inline">(minimum 2)</span></label>
+              {customOutcomes.map((outcome, index) => (
+                <div key={index} className="image-upload-row" style={{ marginBottom: 4 }}>
+                  <input
+                    placeholder={`Outcome ${index + 1}`}
+                    value={outcome}
+                    onChange={(event) => {
+                      const next = [...customOutcomes];
+                      next[index] = event.target.value;
+                      setCustomOutcomes(next);
+                    }}
+                    style={{ flex: 1 }}
+                  />
+                  {customOutcomes.length > 2 ? (
+                    <button
+                      type="button"
+                      className="image-upload-clear"
+                      onClick={() => setCustomOutcomes(customOutcomes.filter((_, i) => i !== index))}
+                    >
+                      Remove
+                    </button>
+                  ) : null}
+                </div>
+              ))}
+              <button
+                type="button"
+                className="button-secondary"
+                style={{ marginTop: 4 }}
+                onClick={() => setCustomOutcomes([...customOutcomes, ""])}
+              >
+                Add outcome
+              </button>
+            </div>
+          ) : null}
+
+          {qualityBlocked ? (
+            <div className="mq-quality-block">
+              <strong>Blocked:</strong> {qualityBlocked}
+            </div>
+          ) : null}
+
+          {qualityWarnings.length > 0 ? (
+            <div className="mq-quality-warnings">
+              {qualityWarnings.map((w, i) => (
+                <div key={`${w.code}-${i}`} className={`mq-quality-item mq-quality-${w.severity}`}>
+                  <span className="mq-quality-badge">{w.severity === "error" ? "✕" : "⚠"}</span>
+                  {w.message}
+                </div>
+              ))}
+            </div>
+          ) : null}
+
+          {duplicateMatches.length > 0 ? (
+            <div className="mq-duplicates">
+              <strong>Possible duplicates found:</strong>
+              <ul>
+                {duplicateMatches.map((m, i) => (
+                  <li key={`${m.slug}-${i}`}>
+                    <Link href={m.source === "market" ? `/markets/${m.slug}` : `/market-requests`}>
+                      {m.title}
+                    </Link>
+                    <span className="mq-dup-meta"> ({m.match_type.replace("_", " ")}{m.similarity ? ` ${Math.round(m.similarity * 100)}%` : ""} — {m.status})</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+
           <div className="button-row">
-            <button className="button-primary" disabled={isSubmitting || !session || hasTemplateErrors} type="submit">
+            <button
+              className="button-primary"
+              disabled={isSubmitting || !session || hasTemplateErrors || !!qualityBlocked || qualityWarnings.some((w) => w.severity === "error") || (multiOutcome && customOutcomes.filter((o) => o.trim()).length < 2)}
+              type="submit"
+            >
               Create market request
             </button>
           </div>

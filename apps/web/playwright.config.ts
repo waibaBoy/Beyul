@@ -12,5 +12,13 @@ export default defineConfig({
     headless: true,
     trace: "retain-on-failure"
   },
-  reporter: [["list"]]
+  reporter: [["list"]],
+  webServer: process.env.PLAYWRIGHT_SKIP_WEBSERVER
+    ? undefined
+    : {
+        command: "npx next dev --turbopack -p 3000",
+        url: baseURL,
+        reuseExistingServer: true,
+        timeout: 120_000
+      }
 });

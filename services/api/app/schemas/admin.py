@@ -49,3 +49,52 @@ class OracleApprovalResponse(BaseModel):
     nonce: int | None = None
     gas_limit: int | None = None
     gas_price_wei: str | None = None
+
+
+class RollingUpDownRunRequest(BaseModel):
+    symbol: str = "BTCUSDT"
+    interval_minutes: int = 5
+    lookahead_windows: int = 3
+    auto_open_markets: bool = True
+    request_settlement_for_due: bool = True
+    finalize_due_markets: bool = False
+
+
+class RollingUpDownRunResponse(BaseModel):
+    symbol: str
+    interval_minutes: int
+    created_markets: list[str] = Field(default_factory=list)
+    opened_markets: list[str] = Field(default_factory=list)
+    skipped_existing_markets: list[str] = Field(default_factory=list)
+    settlement_requested: list[str] = Field(default_factory=list)
+    settlement_finalized: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+
+
+class SettlementQueueItemResponse(BaseModel):
+    market_slug: str
+    market_status: str
+    trading_closes_at: str | None = None
+    resolution_due_at: str | None = None
+    current_resolution_status: str | None = None
+    dispute_count: int = 0
+    candidate_count: int = 0
+
+
+class SettlementQueueResponse(BaseModel):
+    pending: list[SettlementQueueItemResponse] = Field(default_factory=list)
+
+
+class SettlementAutomationRunRequest(BaseModel):
+    reconcile_due_markets: bool = True
+    finalize_settled_markets: bool = True
+    include_disputed: bool = False
+    dry_run: bool = False
+
+
+class SettlementAutomationRunResponse(BaseModel):
+    processed_markets: list[str] = Field(default_factory=list)
+    reconciled_markets: list[str] = Field(default_factory=list)
+    finalized_markets: list[str] = Field(default_factory=list)
+    skipped_markets: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)

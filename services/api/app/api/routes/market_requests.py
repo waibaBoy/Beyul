@@ -2,9 +2,10 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from app.api.deps import CurrentActor, get_current_actor, get_market_request_service
+from app.api.deps import CurrentActor, get_current_actor, get_market_quality_service, get_market_request_service
 from app.core.exceptions import ConflictError, ForbiddenError, NotFoundError
 from app.schemas.common import ReviewDecisionRequest
+from app.schemas.market_quality import QualityCheckResponse
 from app.schemas.market_request import (
     MarketRequestAnswerResponse,
     MarketRequestAnswerUpsertRequest,
@@ -12,6 +13,7 @@ from app.schemas.market_request import (
     MarketRequestResponse,
     MarketRequestUpdateRequest,
 )
+from app.services.market_quality_service import MarketQualityService
 from app.services.market_request_service import MarketRequestService
 
 router = APIRouter(prefix="/market-requests", tags=["market-requests"])
@@ -23,6 +25,17 @@ async def list_my_market_requests(
     service: MarketRequestService = Depends(get_market_request_service),
 ) -> list[MarketRequestResponse]:
     return await service.list_my_requests(actor)
+
+
+@router.post("/quality-check", response_model=QualityCheckResponse)
+async def check_proposal_quality(
+    payload: MarketRequestCreateRequest,
+    actor: CurrentActor = Depends(get_current_actor),
+    quality_service: MarketQualityService = Depends(get_market_quality_service),
+) -> QualityCheckResponse:
+    report = await quality_service.check_proposal(actor.id, payload)
+    data = report.to_dict()
+    return QualityCheckResponse(**data)
 
 
 @router.post("", response_model=MarketRequestResponse, status_code=status.HTTP_201_CREATED)

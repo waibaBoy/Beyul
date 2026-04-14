@@ -23,6 +23,9 @@ Migration order:
 5. `005_ledger_and_payments.sql`
 6. `006_seed_reference_data.sql`
 7. `007_rls_policies.sql`
+8. `008_market_image_url.sql`
+9. `009_market_request_image_url.sql`
+10. `010_legal_acceptances.sql` (signup compliance audit; optional standalone script in `scripts/supabase/`)
 
 Notes:
 

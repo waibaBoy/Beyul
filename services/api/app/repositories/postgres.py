@@ -180,6 +180,7 @@ def _market_request_from_row(row: object) -> MarketRequestResponse:
         slug=mapping["slug"],
         question=mapping["question"],
         description=mapping["description"],
+        image_url=mapping.get("image_url"),
         template_key=metadata.get("template_key") if isinstance(metadata, dict) else None,
         template_config=template_config,
         market_access_mode=mapping["market_access_mode"],
@@ -341,6 +342,7 @@ def _market_from_row(row: object, outcomes: list[MarketOutcomeResponse]) -> Mark
         created_from_request_id=mapping["created_from_request_id"],
         creator_id=mapping["creator_id"],
         settlement_source_id=mapping["settlement_source_id"],
+        image_url=mapping.get("image_url"),
         settlement_reference_url=mapping["settlement_reference_url"],
         settlement_reference_label=mapping["settlement_reference_label"],
         settlement_source=MarketSettlementSourceResponse(
@@ -424,6 +426,9 @@ def _market_depth_level_from_row(row: object) -> MarketDepthLevelResponse:
 
 def _market_trade_from_row(row: object) -> MarketTradeResponse:
     mapping = row._mapping
+    fee = _decimal_to_str(mapping.get("platform_fee_amount")) or "0"
+    creator_fee = _decimal_to_str(mapping.get("creator_fee_amount")) or "0"
+    total_fee_val = float(fee) + float(creator_fee)
     return MarketTradeResponse(
         id=mapping["id"],
         outcome_id=mapping["outcome_id"],
@@ -431,6 +436,7 @@ def _market_trade_from_row(row: object) -> MarketTradeResponse:
         price=_decimal_to_str(mapping["price"]) or "0",
         quantity=_decimal_to_str(mapping["quantity"]) or "0",
         gross_notional=_decimal_to_str(mapping["gross_notional"]) or "0",
+        fee_amount=f"{total_fee_val:.8f}",
         executed_at=mapping["executed_at"],
     )
 
@@ -1307,6 +1313,7 @@ class PostgresMarketRequestRepository(MarketRequestRepository):
                         slug=payload.slug,
                         question=payload.question,
                         description=payload.description,
+                        image_url=payload.image_url,
                         market_access_mode=payload.market_access_mode,
                         requested_rail=payload.requested_rail,
                         settlement_source_id=payload.settlement_source_id,
@@ -1318,6 +1325,11 @@ class PostgresMarketRequestRepository(MarketRequestRepository):
                             "template_config": payload.template_config.model_dump(mode="json")
                             if payload.template_config is not None
                             else None,
+                            **(
+                                {"custom_outcomes": payload.custom_outcomes}
+                                if payload.custom_outcomes and len(payload.custom_outcomes) >= 2
+                                else {}
+                            ),
                         },
                     )
                     .returning(market_creation_requests.c.id)
@@ -1346,6 +1358,7 @@ class PostgresMarketRequestRepository(MarketRequestRepository):
             mapping = current._mapping
             if mapping["status"] != "draft":
                 raise ConflictError("Only draft market requests can be updated")
+            image_url_value = payload.image_url if "image_url" in payload.model_fields_set else mapping["image_url"]
             await session.execute(
                 update(market_creation_requests)
                 .where(market_creation_requests.c.id == request_id)
@@ -1353,6 +1366,7 @@ class PostgresMarketRequestRepository(MarketRequestRepository):
                     title=payload.title or mapping["title"],
                     question=payload.question or mapping["question"],
                     description=payload.description if payload.description is not None else mapping["description"],
+                    image_url=image_url_value,
                     settlement_reference_url=(
                         payload.settlement_reference_url
                         if payload.settlement_reference_url is not None
@@ -1633,6 +1647,7 @@ class PostgresMarketRepository(MarketRepository):
                     title=request_mapping["title"],
                     question=request_mapping["question"],
                     description=request_mapping["description"],
+                    image_url=request_mapping.get("image_url"),
                     rules_text=rules_text,
                     market_access_mode=request_mapping["market_access_mode"],
                     rail_mode=request_mapping["requested_rail"],
@@ -1656,12 +1671,19 @@ class PostgresMarketRepository(MarketRepository):
             market_row = market_insert.first()
             market_id = market_row._mapping["id"]
 
-            for outcome_index, outcome in enumerate((("YES", "Yes"), ("NO", "No"))):
+            req_metadata = request_mapping.get("metadata", {}) or {}
+            custom_outcomes = req_metadata.get("custom_outcomes")
+            if custom_outcomes and isinstance(custom_outcomes, list) and len(custom_outcomes) >= 2:
+                outcome_pairs = [(label.upper().replace(" ", "_")[:10], label) for label in custom_outcomes]
+            else:
+                outcome_pairs = [("YES", "Yes"), ("NO", "No")]
+
+            for outcome_index, (code, label) in enumerate(outcome_pairs):
                 await session.execute(
                     insert(market_outcomes).values(
                         market_id=market_id,
-                        code=outcome[0],
-                        label=outcome[1],
+                        code=code,
+                        label=label,
                         outcome_index=outcome_index,
                         status="active",
                     )

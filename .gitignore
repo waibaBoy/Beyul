@@ -16,6 +16,9 @@ node_modules/
 .next/
 out/
 coverage/
+*.tsbuildinfo
+test-results/
+playwright-report/
 pnpm-lock.yaml
 package-lock.json
 yarn.lock
@@ -27,6 +30,9 @@ __pycache__/
 .ruff_cache/
 .venv/
 venv/
+services/api/.vendor/
+services/api/vendor_pkgs/
+services/api/pytest-cache-files-*/
 dist/
 build/
 *.pyc

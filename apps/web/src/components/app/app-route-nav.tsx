@@ -15,6 +15,7 @@ import { SearchModal } from "@/components/app/search-modal";
 const primaryLinks = [
   { href: "/markets", label: "Markets" },
   { href: "/portfolio", label: "Portfolio" },
+  { href: "/wallet", label: "Wallet" },
   { href: "/communities", label: "Communities" },
   { href: "/about", label: "About" }
 ];

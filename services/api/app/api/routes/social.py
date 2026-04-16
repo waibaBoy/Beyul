@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends
 
-from app.api.deps import CurrentActor, get_current_actor
+from app.api.deps import CurrentActor, get_current_actor, get_current_actor_optional
 from app.core.container import container
 from app.schemas.common import MessageResponse
 from app.schemas.social import (
@@ -22,7 +22,7 @@ def _get_social_service():
 @router.get("/profile/{username}", response_model=TradingProfileResponse)
 async def get_trading_profile(
     username: str,
-    actor: CurrentActor | None = Depends(get_current_actor),
+    actor: CurrentActor | None = Depends(get_current_actor_optional),
 ):
     svc = _get_social_service()
     viewer_id = actor.id if actor else None

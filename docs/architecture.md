@@ -2,7 +2,7 @@
 
 ## Goal
 
-Build a prediction market platform with low-latency matching, durable trade state, clean service boundaries, and an onchain settlement layer.
+Build a prediction market platform with low-latency matching, durable trade state, clean service boundaries, and a trust-minimized settlement path that can graduate from beta orchestration to audited on-chain payout enforcement.
 
 ## System map
 
@@ -24,8 +24,14 @@ Rust WebSocket Gateway -----> Clients
     |
 Rust Price Feed <----- External market data / reference prices
 
-Settlement path:
-FastAPI Admin -> Polygon Contract -> Chainlink-backed settlement data -> Payout state
+Current settlement path:
+FastAPI/Admin/Automation -> Oracle Service -> UMA Optimistic Oracle or mock provider -> Resolution state
+
+Reference data path:
+External data sources such as Chainlink, Binance, and official URLs -> market metadata, source evidence, and user-facing contract details
+
+Future on-chain payout path:
+FastAPI/Rust execution state -> Polygon contracts -> escrow, payout claims, and oracle-authorized finality
 ```
 
 ## Responsibilities
@@ -77,11 +83,12 @@ FastAPI Admin -> Polygon Contract -> Chainlink-backed settlement data -> Payout 
 - rate-limit and session support if needed
 - ephemeral market state snapshots
 
-### Solidity + Chainlink
+### Solidity + Oracle adapters
 
-- escrow, market resolution, and claim flow
-- oracle-authorized settlement trigger
-- final payout state recorded on Polygon
+- current Solidity scaffold anchors market metadata and oracle-authorized settlement status
+- current API oracle layer supports mock and UMA optimistic oracle modes
+- Chainlink and other data providers are reference/evidence sources, not the primary settlement rail today
+- future Solidity expansion must add escrow, share accounting, payout claims, callback enforcement, and audit-ready access controls
 
 ## Settlement and trust model
 
@@ -96,7 +103,7 @@ This section clarifies how “zero trust,” **on-chain settlement**, and **off-
 
 Where the **on-chain + oracle path** is active for a market:
 
-- **Escrow, resolution, and claims** are governed by the **contract** and the **oracle model** (e.g. UMA-style assertions, Chainlink-backed reference data, or other configured providers—see `services/api` oracle services and `contracts/polygon`).
+- **Escrow, resolution, and claims** are intended to be governed by the **contract** and the **oracle model** once the on-chain rail is fully implemented. Today, the API implements the active oracle lifecycle and the Solidity contract is a scaffold.
 - Users should treat **on-chain state and emitted events** as the **final word** for that rail once a payout path is executed, subject to the **oracle and contract design** (upgradeability, admin keys, pausability, and economic security are part of that design).
 
 ### What remains off-chain (and why it still matters)
@@ -108,7 +115,21 @@ Even with on-chain settlement:
 
 ### Oracle trust boundary
 
-An **oracle** is always a **design choice**: economic games (e.g. UMA), feed networks, or privileged attestors each carry **assumptions** about liveness, data quality, and governance. Document the **specific** oracle and dispute flow **per market type** in runbooks and user-facing copy (`/about`, terms) as implementations harden.
+An **oracle** is always a **design choice**: economic games such as UMA, feed networks such as Chainlink, APIs such as Binance, or privileged attestors each carry assumptions about liveness, data quality, and governance. The current beta direction is UMA Optimistic Oracle for settlement assertions, with Chainlink/Binance/official URLs used as reference sources or evidence depending on the market. Document the specific oracle and dispute flow per market type in runbooks and user-facing copy (`/about`, terms) as implementations harden.
+
+### Contract status
+
+`contracts/polygon/src/BeyulMarket.sol` is not a production settlement contract. It currently supports owner-created market records and oracle-authorized settlement metadata only. It does not implement:
+
+- escrow or deposits
+- share minting/burning/accounting
+- payout claims
+- fee distribution
+- UMA callback validation
+- withdrawal safety
+- upgrade, pause, and admin-key governance reviews
+
+Do not present the current Polygon contract as production-ready, trustless payout infrastructure until those pieces are implemented, tested, and audited.
 
 ### Hybrid rails
 
@@ -132,6 +153,7 @@ For **feature gaps vs Polymarket / Kalshi** (checklists and what not to copy bli
 4. Build Rust engine with Redis event emission
 5. Add websocket gateway
 6. Add contract lifecycle and settlement path
+7. Expand Polygon contracts from metadata scaffold into audited escrow/payout contracts
 
 ## Open design decisions
 
@@ -139,10 +161,14 @@ For **feature gaps vs Polymarket / Kalshi** (checklists and what not to copy bli
 - exact contract between FastAPI order intake and Rust order execution
 - whether price feed data is only for display or also used for resolution candidate generation
 - final model for admin approvals and market dispute handling (including how disputes interact with oracle timelines)
+- production path for UMA signer funding, bond token approval, assertion submission, dispute windows, and reconciliation
+- scope and audit path for escrow/payout smart contracts
 
 ## Implementation status
 
-- **Web (`apps/web`)**: App Router pages for markets, portfolio, communities, market requests, auth; market detail consolidates shell, holders, resolution, and signed-in `me` / portfolio / orders in one bootstrap pass; landing card sparklines load on visibility (Intersection Observer) to limit `/history` traffic.
-- **API (`services/api`)**: FastAPI with optional in-memory repository for local dev; `Settings` rejects unsafe defaults when `APP_ENV` is `production`, `prod`, or `staging` (Postgres backend, no dev auth, non-default JWT and DB credentials, dedicated oracle callback secret). Startup logs `app_env` and `repository_backend`.
-- **Database**: Supabase migrations through `010_legal_acceptances.sql` (includes `009` market/request `image_url` and `010` signup compliance audit). Apply all migrations before pointing the API at Postgres.
+- **Web (`apps/web`)**: App Router pages for landing, markets, market detail/trading, portfolio, communities, market requests, admin review, auth, profile, leaderboard, creators, wallet, ops, legal, and API keys.
+- **API (`services/api`)**: FastAPI with optional in-memory repository for local dev; Postgres repository for durable mode; route groups for auth, markets, market requests, admin, portfolio, liquidity, advanced orders, notifications, push, transfers, API keys, social, creators, profiles, and posts. `Settings` rejects unsafe defaults when `APP_ENV` is `production`, `prod`, or `staging`.
+- **Oracle**: Mock and UMA providers exist. UMA supports simulated and live execution modes, readiness checks, approval helpers, assertion metadata, transaction submission, and reconciliation fields. Live use still requires funded signer, token balance, token allowance, and network-specific operational validation.
+- **Contracts**: Polygon contract is a scaffold only. It is not yet the final escrow/payout rail.
+- **Database**: Apply all migrations under `supabase/migrations` before pointing the API at Postgres.
 - **Domain traceability**: See `docs/domain-rules-parity.md` for a concise map from domain rules to routes and known gaps.

@@ -1703,13 +1703,34 @@ class PostgresMarketRepository(MarketRepository):
             await session.commit()
             return market
 
-    async def list_markets(self) -> list[MarketResponse]:
+    async def list_markets(self, limit: int = 50, offset: int = 0, status_filter: str | None = None) -> list[MarketResponse]:
         async with self._session_factory() as session:
-            result = await session.execute(
-                self._market_select_stmt().order_by(markets.c.created_at.desc())
-            )
+            stmt = self._market_select_stmt().order_by(markets.c.created_at.desc())
+            if status_filter:
+                stmt = stmt.where(markets.c.status == status_filter)
+            stmt = stmt.limit(min(limit, 100)).offset(offset)
+            result = await session.execute(stmt)
             rows = result.fetchall()
-            return [await self._hydrate_market(session, row) for row in rows]
+
+            if not rows:
+                return []
+
+            # Batch-load outcomes for all markets in one query (eliminate N+1)
+            market_ids = [row._mapping["id"] for row in rows]
+            outcome_result = await session.execute(
+                select(market_outcomes)
+                .where(market_outcomes.c.market_id.in_(market_ids))
+                .order_by(market_outcomes.c.market_id, market_outcomes.c.outcome_index.asc())
+            )
+            outcomes_by_market: dict = {}
+            for o_row in outcome_result.fetchall():
+                mid = o_row._mapping["market_id"]
+                outcomes_by_market.setdefault(mid, []).append(_market_outcome_from_row(o_row))
+
+            return [
+                _market_from_row(row, outcomes_by_market.get(row._mapping["id"], []))
+                for row in rows
+            ]
 
     async def get_market(self, slug: str) -> MarketResponse:
         async with self._session_factory() as session:
@@ -2957,129 +2978,133 @@ class PostgresTradingRepository(TradingRepository):
         return await self.get_portfolio_summary(payload.profile_id)
 
     async def _load_quotes(self, session, market: MarketResponse) -> list[MarketQuoteResponse]:
+        outcome_ids = [o.id for o in market.outcomes]
+
+        # Single aggregation query for all outcomes' order book stats
+        order_stats_result = await session.execute(
+            text("""
+                select
+                    outcome_id,
+                    max(price) filter (where side = 'buy')  as best_bid,
+                    min(price) filter (where side = 'sell') as best_ask,
+                    coalesce(sum(remaining_quantity) filter (where side = 'buy'), 0)  as bid_qty,
+                    coalesce(sum(remaining_quantity) filter (where side = 'sell'), 0) as ask_qty
+                from public.orders
+                where market_id = :market_id
+                  and outcome_id = any(:outcome_ids)
+                  and status in ('open', 'partially_filled')
+                group by outcome_id
+            """),
+            {"market_id": market.id, "outcome_ids": outcome_ids},
+        )
+        order_stats = {row._mapping["outcome_id"]: row._mapping for row in order_stats_result.fetchall()}
+
+        # Single query for last price + volume per outcome using DISTINCT ON
+        trade_stats_result = await session.execute(
+            text("""
+                with last_prices as (
+                    select distinct on (outcome_id)
+                        outcome_id, price as last_price
+                    from public.trades
+                    where market_id = :market_id
+                      and outcome_id = any(:outcome_ids)
+                    order by outcome_id, executed_at desc
+                ),
+                volumes as (
+                    select outcome_id, coalesce(sum(quantity), 0) as traded_volume
+                    from public.trades
+                    where market_id = :market_id
+                      and outcome_id = any(:outcome_ids)
+                    group by outcome_id
+                )
+                select v.outcome_id, v.traded_volume, lp.last_price
+                from volumes v
+                left join last_prices lp on lp.outcome_id = v.outcome_id
+            """),
+            {"market_id": market.id, "outcome_ids": outcome_ids},
+        )
+        trade_stats = {row._mapping["outcome_id"]: row._mapping for row in trade_stats_result.fetchall()}
+
         quotes: list[MarketQuoteResponse] = []
         for outcome in market.outcomes:
-            best_bid_result = await session.execute(
-                select(func.max(orders.c.price))
-                .where(
-                    and_(
-                        orders.c.market_id == market.id,
-                        orders.c.outcome_id == outcome.id,
-                        orders.c.side == "buy",
-                        orders.c.status.in_(("open", "partially_filled")),
-                    )
-                )
-            )
-            best_ask_result = await session.execute(
-                select(func.min(orders.c.price))
-                .where(
-                    and_(
-                        orders.c.market_id == market.id,
-                        orders.c.outcome_id == outcome.id,
-                        orders.c.side == "sell",
-                        orders.c.status.in_(("open", "partially_filled")),
-                    )
-                )
-            )
-            bid_qty_result = await session.execute(
-                select(func.coalesce(func.sum(orders.c.remaining_quantity), 0))
-                .where(
-                    and_(
-                        orders.c.market_id == market.id,
-                        orders.c.outcome_id == outcome.id,
-                        orders.c.side == "buy",
-                        orders.c.status.in_(("open", "partially_filled")),
-                    )
-                )
-            )
-            ask_qty_result = await session.execute(
-                select(func.coalesce(func.sum(orders.c.remaining_quantity), 0))
-                .where(
-                    and_(
-                        orders.c.market_id == market.id,
-                        orders.c.outcome_id == outcome.id,
-                        orders.c.side == "sell",
-                        orders.c.status.in_(("open", "partially_filled")),
-                    )
-                )
-            )
-            last_trade_result = await session.execute(
-                select(trades.c.price)
-                .where(and_(trades.c.market_id == market.id, trades.c.outcome_id == outcome.id))
-                .order_by(trades.c.executed_at.desc())
-                .limit(1)
-            )
-            trade_volume_result = await session.execute(
-                select(func.coalesce(func.sum(trades.c.quantity), 0))
-                .where(and_(trades.c.market_id == market.id, trades.c.outcome_id == outcome.id))
-            )
+            os = order_stats.get(outcome.id, {})
+            ts = trade_stats.get(outcome.id, {})
             quotes.append(
                 _market_quote_from_values(
                     outcome.id,
                     outcome.code,
                     outcome.label,
-                    last_price=last_trade_result.scalar_one_or_none(),
-                    best_bid=best_bid_result.scalar_one_or_none(),
-                    best_ask=best_ask_result.scalar_one_or_none(),
-                    traded_volume=trade_volume_result.scalar_one(),
-                    resting_bid_quantity=bid_qty_result.scalar_one(),
-                    resting_ask_quantity=ask_qty_result.scalar_one(),
+                    last_price=ts.get("last_price"),
+                    best_bid=os.get("best_bid"),
+                    best_ask=os.get("best_ask"),
+                    traded_volume=ts.get("traded_volume", 0),
+                    resting_bid_quantity=os.get("bid_qty", 0),
+                    resting_ask_quantity=os.get("ask_qty", 0),
                 )
             )
         return quotes
 
     async def _load_order_books(self, session, market: MarketResponse) -> list[MarketOrderBookResponse]:
-        order_books: list[MarketOrderBookResponse] = []
-        for outcome in market.outcomes:
-            bids_result = await session.execute(
-                text(
-                    """
+        outcome_ids = [o.id for o in market.outcomes]
+
+        # Fetch top-5 bids and asks for all outcomes in two queries instead of 2*N
+        bids_result = await session.execute(
+            text("""
+                select outcome_id, price, quantity, order_count
+                from (
                     select
-                        price,
+                        outcome_id, price,
                         coalesce(sum(remaining_quantity), 0) as quantity,
-                        count(*) as order_count
+                        count(*) as order_count,
+                        row_number() over (partition by outcome_id order by price desc) as rn
                     from public.orders
-                    where
-                        market_id = :market_id
-                        and outcome_id = :outcome_id
-                        and side = 'buy'
-                        and status in ('open', 'partially_filled')
-                    group by price
-                    order by price desc
-                    limit 5
-                    """
-                ),
-                {"market_id": market.id, "outcome_id": outcome.id},
-            )
-            asks_result = await session.execute(
-                text(
-                    """
+                    where market_id = :market_id
+                      and outcome_id = any(:outcome_ids)
+                      and side = 'buy'
+                      and status in ('open', 'partially_filled')
+                    group by outcome_id, price
+                ) ranked where rn <= 5
+                order by outcome_id, price desc
+            """),
+            {"market_id": market.id, "outcome_ids": outcome_ids},
+        )
+        asks_result = await session.execute(
+            text("""
+                select outcome_id, price, quantity, order_count
+                from (
                     select
-                        price,
+                        outcome_id, price,
                         coalesce(sum(remaining_quantity), 0) as quantity,
-                        count(*) as order_count
+                        count(*) as order_count,
+                        row_number() over (partition by outcome_id order by price asc) as rn
                     from public.orders
-                    where
-                        market_id = :market_id
-                        and outcome_id = :outcome_id
-                        and side = 'sell'
-                        and status in ('open', 'partially_filled')
-                    group by price
-                    order by price asc
-                    limit 5
-                    """
-                ),
-                {"market_id": market.id, "outcome_id": outcome.id},
+                    where market_id = :market_id
+                      and outcome_id = any(:outcome_ids)
+                      and side = 'sell'
+                      and status in ('open', 'partially_filled')
+                    group by outcome_id, price
+                ) ranked where rn <= 5
+                order by outcome_id, price asc
+            """),
+            {"market_id": market.id, "outcome_ids": outcome_ids},
+        )
+
+        bids_by_outcome: dict = {}
+        for row in bids_result.fetchall():
+            bids_by_outcome.setdefault(row._mapping["outcome_id"], []).append(_market_depth_level_from_row(row))
+        asks_by_outcome: dict = {}
+        for row in asks_result.fetchall():
+            asks_by_outcome.setdefault(row._mapping["outcome_id"], []).append(_market_depth_level_from_row(row))
+
+        return [
+            MarketOrderBookResponse(
+                outcome_id=outcome.id,
+                outcome_label=outcome.label,
+                bids=bids_by_outcome.get(outcome.id, []),
+                asks=asks_by_outcome.get(outcome.id, []),
             )
-            order_books.append(
-                MarketOrderBookResponse(
-                    outcome_id=outcome.id,
-                    outcome_label=outcome.label,
-                    bids=[_market_depth_level_from_row(row) for row in bids_result.fetchall()],
-                    asks=[_market_depth_level_from_row(row) for row in asks_result.fetchall()],
-                )
-            )
-        return order_books
+            for outcome in market.outcomes
+        ]
 
     async def _load_recent_trades(self, session, market_id: UUID) -> list[MarketTradeResponse]:
         outcome_alias = market_outcomes.alias("trade_outcomes")

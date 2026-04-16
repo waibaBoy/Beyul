@@ -969,8 +969,11 @@ class InMemoryMarketRepository(MarketRepository):
         self._markets[slug] = market
         return market.model_copy()
 
-    async def list_markets(self) -> list[MarketResponse]:
-        return [market.model_copy() for market in self._markets.values()]
+    async def list_markets(self, limit: int = 50, offset: int = 0, status_filter: str | None = None) -> list[MarketResponse]:
+        all_markets = list(self._markets.values())
+        if status_filter:
+            all_markets = [m for m in all_markets if m.status == status_filter]
+        return [m.model_copy() for m in all_markets[offset:offset + limit]]
 
     async def get_market(self, slug: str) -> MarketResponse:
         market = self._markets.get(slug)

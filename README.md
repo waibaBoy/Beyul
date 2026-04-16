@@ -1,6 +1,6 @@
 # Beyul
 
-Beyul is a monorepo for a prediction-market platform inspired by Polymarket, with a working local stack (Next.js, FastAPI, Postgres via Supabase migrations, optional in-memory API mode).
+Beyul is a monorepo for a prediction-market platform inspired by Polymarket/Kalshi-style market UX, with a working local stack for market creation, trading, resolution, community surfaces, and operator workflows.
 
 The repo is optimized around a split-stack architecture:
 
@@ -9,8 +9,9 @@ The repo is optimized around a split-stack architecture:
 - Next.js for the user-facing web application
 - PostgreSQL for durable market, order, trade, and user data
 - Redis for cache, event fanout, and cross-service coordination
-- Solidity on Polygon for settlement and escrow logic
-- Chainlink for external settlement data
+- UMA Optimistic Oracle integration for trust-minimized settlement assertions, with mock/simulated/live modes
+- External data sources such as Chainlink/Binance/reference APIs for market metadata, display data, and source evidence
+- Solidity on Polygon as the settlement anchoring scaffold; full escrow and payout contracts are not production-complete yet
 - AWS EC2 as the primary deployment target
 
 ## Monorepo layout
@@ -29,7 +30,7 @@ The repo is optimized around a split-stack architecture:
 |-- infra/
 |   |-- aws/                  # EC2 deployment notes and infra placeholders
 |   `-- docker/               # Local Postgres/Redis stack
-|-- scripts/                  # Repo automation placeholders
+|-- scripts/                  # Repo automation and smoke-test helpers
 |-- services/
 |   |-- api/                  # FastAPI service for REST/auth/admin
 |   `-- realtime/             # Rust workspace for engine/feed/ws
@@ -37,7 +38,6 @@ The repo is optimized around a split-stack architecture:
 |   |-- events/               # Redis/pub-sub and websocket event contracts
 |   `-- openapi/              # REST surface planning
 |-- .editorconfig
-|-- .env.example
 |-- .gitignore
 |-- package.json
 `-- pnpm-workspace.yaml
@@ -59,11 +59,12 @@ Rust workspace split into:
 FastAPI service responsible for:
 
 - authentication and session issuance
-- user/account/admin APIs
-- market discovery and read APIs
-- write-side orchestration for order submission
+- user, account, admin, portfolio, and operator APIs
+- market discovery, market detail, request intake, and resolution APIs
+- write-side orchestration for order submission into the Rust matching path
 - persistence into PostgreSQL
 - coordination with Redis and Rust services
+- oracle/dispute lifecycle orchestration, including mock and UMA-backed flows
 
 ### `apps/web`
 
@@ -72,22 +73,34 @@ Next.js App Router frontend for:
 - market browsing
 - portfolio and positions
 - order entry
-- admin/operator workflows
+- market request intake and admin/operator workflows
+- communities, profiles, creator tools, notifications, wallet, leaderboard, and ops surfaces
 
 ### `contracts/polygon`
 
-Settlement and escrow contract scaffold for:
+Polygon contract scaffold for:
 
 - market creation metadata anchoring
-- escrow and payout flow
-- oracle-authorized settlement
+- oracle-authorized settlement metadata
+
+Current status: `contracts/polygon/src/BeyulMarket.sol` is intentionally minimal. It does not yet implement production escrow, deposits, share accounting, payout claims, UMA callback enforcement, or user withdrawal flows. Treat FastAPI/Postgres/Rust as the active beta trading stack and the UMA integration as the active oracle boundary until the contract layer is expanded and audited.
+
+## Settlement direction
+
+The current settlement direction is **UMA optimistic oracle first**:
+
+- `ORACLE_PROVIDER=mock` is the default local path.
+- `ORACLE_PROVIDER=uma` with `ORACLE_EXECUTION_MODE=simulated` exercises the UMA metadata path without broadcasting transactions.
+- `ORACLE_PROVIDER=uma` with `ORACLE_EXECUTION_MODE=live` signs and submits UMA Optimistic Oracle transactions after signer/RPC/token readiness checks pass.
+
+Chainlink and other APIs are treated as reference sources for market terms, source URLs, display prices, or evidence. They are not currently the primary on-chain settlement mechanism.
 
 ## Local development
 
 Typical local workflow:
 
 1. Start infra with `infra/docker/docker-compose.local.yml` (Postgres/Redis as needed).
-2. Apply Supabase SQL migrations under `supabase/migrations` in order through `010_legal_acceptances.sql` (or run `scripts/supabase/010_legal_acceptances_standalone.sql` after `009` if you add compliance later), when using Postgres.
+2. Apply all Supabase SQL migrations under `supabase/migrations` in order when using Postgres.
 3. Run FastAPI from `services/api` (defaults use `REPOSITORY_BACKEND=memory` unless you point at Postgres).
 4. Run Next.js from `apps/web`.
 5. Optionally run the Rust workspace from `services/realtime` for matching-engine and websocket features.
@@ -103,9 +116,11 @@ Production-like deployments must set `APP_ENV` to `production` or `staging` only
 
 ## Next review points
 
-The key architecture choices to review before implementation:
+The key architecture choices to review before beta:
 
-- whether order placement is synchronous through FastAPI or asynchronously queued into Rust
-- whether the websocket gateway stays standalone or is folded into the API edge
+- whether beta is explicitly custodial/off-chain ledger first, on-chain settlement first, or hybrid per market rail
+- how the expanded Polygon contracts will handle escrow, share accounting, payout claims, and oracle callbacks
+- how UMA live assertions are funded, approved, reconciled, and monitored in production
+- whether order placement always goes through the Rust matching queue in deployed environments
 - how much market state is stored in Redis versus reconstructed from PostgreSQL and engine events
-- whether settlement is per-market, batched, or epoch-based onchain
+- whether the websocket gateway stays standalone or is folded into the API edge

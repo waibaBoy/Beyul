@@ -101,7 +101,7 @@ export const SearchModal = ({ isOpen, onClose }: SearchModalProps) => {
     const loadData = async () => {
       try {
         const [nextMarkets, nextCommunities] = await Promise.allSettled([
-          beyulApiFetch<Market[]>("/api/v1/markets"),
+          beyulApiFetch<Market[]>("/api/v1/markets?limit=50"),
           beyulApiFetch<Community[]>("/api/v1/communities")
         ]);
         if (nextMarkets.status === "fulfilled") setMarkets(nextMarkets.value);

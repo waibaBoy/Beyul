@@ -63,7 +63,7 @@ export const MarketsWorkspace = () => {
 
     const loadMarkets = async () => {
       try {
-        const nextMarkets = await beyulApiFetch<Market[]>("/api/v1/markets");
+        const nextMarkets = await beyulApiFetch<Market[]>("/api/v1/markets?limit=50");
         if (isMounted) {
           setMarkets(nextMarkets);
           setStatusMessage(`Loaded ${nextMarkets.length} published markets.`);

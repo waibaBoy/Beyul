@@ -1,3 +1,5 @@
+import hmac
+import logging
 from uuid import UUID
 
 from fastapi import Header, HTTPException, status
@@ -21,6 +23,26 @@ from app.services.market_quality_service import MarketQualityService
 from app.services.notification_service import NotificationService
 from app.services.trading_service import TradingService
 
+_logger = logging.getLogger(__name__)
+
+
+async def _resolve_api_key(authorization: str) -> CurrentActor | None:
+    """Attempt to resolve auth via API key (sk_live_* prefix)."""
+    token = authorization.removeprefix("Bearer ").strip()
+    if not token.startswith("sk_live_"):
+        return None
+    result = await container.api_key_service.validate_key(token)
+    if not result:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or revoked API key.",
+        )
+    profile_id = result["profile_id"]
+    permissions = result.get("permissions", [])
+    return await container.actor_service.resolve_api_key_actor(
+        profile_id=profile_id, permissions=permissions,
+    )
+
 
 async def get_current_actor(
     authorization: str | None = Header(default=None),
@@ -34,6 +56,11 @@ async def get_current_actor(
     x_satta_is_admin: bool | None = Header(default=None),
 ) -> CurrentActor:
     if authorization:
+        # Try API key auth first (sk_live_* tokens)
+        api_key_actor = await _resolve_api_key(authorization)
+        if api_key_actor:
+            return api_key_actor
+        # Fall back to Supabase JWT
         claims = await container.supabase_auth_service.verify_bearer_token(authorization)
         return await container.actor_service.resolve_authenticated_actor(claims)
     if settings.allow_dev_auth:
@@ -47,6 +74,32 @@ async def get_current_actor(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Authentication is required.",
     )
+
+
+async def get_current_actor_optional(
+    authorization: str | None = Header(default=None),
+    x_satta_user_id: UUID | None = Header(default=None),
+    x_satta_username: str | None = Header(default=None),
+    x_satta_display_name: str | None = Header(default=None),
+    x_satta_is_admin: bool | None = Header(default=None),
+) -> CurrentActor | None:
+    """Like get_current_actor, but returns None instead of 401 for unauthenticated requests."""
+    if not authorization and not x_satta_user_id:
+        return None
+    try:
+        return await get_current_actor(
+            authorization=authorization,
+            x_beyul_user_id=None,
+            x_beyul_username=None,
+            x_beyul_display_name=None,
+            x_beyul_is_admin=None,
+            x_satta_user_id=x_satta_user_id,
+            x_satta_username=x_satta_username,
+            x_satta_display_name=x_satta_display_name,
+            x_satta_is_admin=x_satta_is_admin,
+        )
+    except HTTPException:
+        return None
 
 
 def get_profile_service() -> ProfileService:
@@ -127,7 +180,9 @@ def get_amm_service():
 def require_oracle_secret(
     x_satta_oracle_secret: str | None = Header(default=None),
 ) -> None:
-    if not settings.oracle_callback_secret or x_satta_oracle_secret != settings.oracle_callback_secret:
+    expected = (settings.oracle_callback_secret or "").encode()
+    provided = (x_satta_oracle_secret or "").encode()
+    if not expected or not hmac.compare_digest(provided, expected):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Oracle callback authentication failed.",

@@ -32,9 +32,12 @@ router = APIRouter(prefix="/markets", tags=["markets"])
 
 @router.get("", response_model=list[MarketResponse])
 async def list_markets(
+    limit: int = 50,
+    offset: int = 0,
+    status: str | None = None,
     service: MarketService = Depends(get_market_service),
 ) -> list[MarketResponse]:
-    return await service.list_markets()
+    return await service.list_markets(limit=limit, offset=offset, status_filter=status)
 
 
 @router.get("/{market_slug}/trading-shell", response_model=MarketTradingShellResponse)

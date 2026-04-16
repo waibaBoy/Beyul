@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AuthFeedback } from "@/components/auth/auth-feedback";
+import { AdvancedOrderForm } from "@/components/app/advanced-order-form";
 import { InteractiveChart } from "@/components/app/interactive-chart";
 import { MarketIcon } from "@/components/app/market-icon";
 import { useAuth } from "@/components/auth/auth-provider";
@@ -1937,6 +1938,15 @@ export const MarketDetailWorkspace = ({ slug }: MarketDetailWorkspaceProps) => {
           </>
         )}
       </section>
+
+      {shell ? (
+        <AdvancedOrderForm
+          marketSlug={slug}
+          outcomeId={selectedQuote?.outcome_id || shell.quotes[0]?.outcome_id || ""}
+          outcomeName={selectedQuote?.outcome_label || shell.quotes[0]?.outcome_label || ""}
+          currentPrice={selectedQuote?.last_price ? Number(selectedQuote.last_price) : undefined}
+        />
+      ) : null}
 
       <section className="auth-section market-exposure-section">
         <h2>Your position</h2>

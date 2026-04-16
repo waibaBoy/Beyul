@@ -2,7 +2,9 @@
 
 This turns the gap list into an implementation tracker. Keep statuses honest and update in each PR.
 
-Legend: `todo` | `in_progress` | `done`
+Legend: `todo` | `in_progress` | `beta` | `done`
+
+`done` means implemented and validated enough to treat as complete for the current release target. `beta` means the feature exists, but still needs production hardening, operational validation, security review, or contract/audit work before it should be considered public real-money infrastructure.
 
 ## Phase 1 (foundations)
 
@@ -36,8 +38,8 @@ Legend: `todo` | `in_progress` | `done`
 | Social features | done | Trading profiles (`/profile/{username}`), follow/unfollow system, follower/following lists, trading stats view. DB migration `013_social_follows.sql`. |
 | Leaderboards + gamification | done | Global PnL leaderboard at `/leaderboard` ranked by realized PnL with medal ranks. |
 | Advanced order types | done | Conditional order service: stop-loss, take-profit, trailing stop. In-memory trigger engine, API at `/orders/conditional`. |
-| On-chain settlement | done | UMA oracle live mode with `LiveOracleProvider` (Web3 tx construction, gas estimation, signing). Graceful fallback to simulated mode. |
-| Deposit/withdrawal flows | done | Transfer request system with `transfer_requests` table, deposit/withdrawal API, fee calculation (0.5% on withdrawals). Migration `014_deposit_withdrawals.sql`. |
+| On-chain settlement | beta | UMA oracle live mode with `LiveOracleProvider` (Web3 tx construction, gas estimation, signing), readiness checks, approval helper, and simulated mode. Polygon escrow/payout contracts are still scaffold-only and require implementation/audit before real-money finality. |
+| Deposit/withdrawal flows | beta | Transfer request system with `transfer_requests` table, deposit/withdrawal API, fee calculation (0.5% on withdrawals). Migration `014_deposit_withdrawals.sql`. Requires custody/payment/on-chain settlement hardening before public real-money beta. |
 | Push notifications | done | Service worker (`sw.js`), push subscription API (`/push/subscribe`, `/push/unsubscribe`), broadcast capability. |
 | Multi-outcome markets | done | Custom outcome support in market requests, N-outcome publication in postgres repository, frontend multi-outcome form. |
 | API keys / programmatic trading | done | API key system: `sk_live_*` format, SHA-256 hashed storage, create/list/revoke endpoints. Migration `015_api_keys.sql`. |
@@ -98,6 +100,13 @@ Legend: `todo` | `in_progress` | `done`
 | # | File | Purpose |
 |---|------|---------|
 | 001 | `001_extensions_and_types.sql` | Core extensions and enums |
+| 002 | `002_core_identity_and_social.sql` | Identity, profile, and social foundations |
+| 003 | `003_markets_and_trading.sql` | Markets, outcomes, orders, trades, positions |
+| 004 | `004_resolution_and_disputes.sql` | Resolution, disputes, evidence |
+| 005 | `005_ledger_and_payments.sql` | Ledger and payment primitives |
+| 006 | `006_seed_reference_data.sql` | Seed communities/reference data |
+| 007 | `007_rls_policies.sql` | Row-level security policies |
+| 008 | `008_market_image_url.sql` | Image URL on markets |
 | 009 | `009_market_request_image_url.sql` | Image URL on requests |
 | 010 | `010_legal_acceptances.sql` | Signup compliance |
 | 011 | `011_notifications.sql` | Notifications table |
@@ -105,6 +114,7 @@ Legend: `todo` | `in_progress` | `done`
 | 013 | `013_social_follows.sql` | Follow relationships + trading stats view |
 | 014 | `014_deposit_withdrawals.sql` | Transfer requests |
 | 015 | `015_api_keys.sql` | API key storage |
+| 016 | `016_performance_indexes.sql` | Query performance indexes |
 
 ## Frontend pages
 

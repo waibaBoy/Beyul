@@ -1,6 +1,7 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 
 from app.api.deps import CurrentActor, get_current_actor
+from app.core.config import settings
 from app.schemas.auth import (
     AuthActionResponse,
     AuthUserResponse,
@@ -10,19 +11,22 @@ from app.schemas.auth import (
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
+_is_prod = (settings.app_env or "").strip().lower() in {"production", "prod", "staging"}
+
 
 @router.post("/signup", response_model=AuthActionResponse)
 async def signup(_: SignupRequest) -> AuthActionResponse:
+    if _is_prod:
+        raise HTTPException(status_code=501, detail="Use Supabase Auth for signup in production")
     return AuthActionResponse(message="Signup flow scaffolded locally")
 
 
 @router.post("/login", response_model=AuthActionResponse)
 async def login(_: LoginRequest) -> AuthActionResponse:
+    if _is_prod:
+        raise HTTPException(status_code=501, detail="Use Supabase Auth for login in production")
     return AuthActionResponse(
-        message="Login flow scaffolded locally",
-        access_token="local-access-token",
-        refresh_token="local-refresh-token",
-        token_type="bearer",
+        message="Login flow scaffolded locally — do NOT use in production",
     )
 
 
@@ -33,11 +37,10 @@ async def logout() -> AuthActionResponse:
 
 @router.post("/refresh", response_model=AuthActionResponse)
 async def refresh() -> AuthActionResponse:
+    if _is_prod:
+        raise HTTPException(status_code=501, detail="Use Supabase Auth for refresh in production")
     return AuthActionResponse(
-        message="Refresh flow scaffolded locally",
-        access_token="local-access-token",
-        refresh_token="local-refresh-token",
-        token_type="bearer",
+        message="Refresh flow scaffolded locally — do NOT use in production",
     )
 
 

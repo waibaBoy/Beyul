@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { beyulApiFetch } from "@/lib/api/beyul-api";
@@ -480,7 +481,7 @@ export const MarketRequestsWorkspace = () => {
             <label htmlFor="request-image">Market image <span className="field-hint-inline">(optional)</span></label>
             <div className="image-upload-row">
               {form.image_url && (
-                <img className="market-icon" src={form.image_url} alt="Preview" width={48} height={48} />
+                <Image className="market-icon" src={form.image_url} alt="Preview" width={48} height={48} unoptimized />
               )}
               <label className="image-upload-btn" htmlFor="request-image-file">
                 {imageUploading ? "Uploading…" : form.image_url ? "Change image" : "Upload image"}

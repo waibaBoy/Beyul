@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { useEffect, useState } from "react";
 import { AuthFeedback } from "@/components/auth/auth-feedback";
 import { useAuth } from "@/components/auth/auth-provider";
@@ -262,7 +263,7 @@ export const MarketRequestDetailWorkspace = ({ requestId }: MarketRequestDetailW
             <label htmlFor="detail-request-image-file">Market image <span className="field-hint-inline">(optional)</span></label>
             <div className="image-upload-row">
               {marketRequest.image_url ? (
-                <img className="market-icon" src={marketRequest.image_url} alt="Market image preview" width={48} height={48} />
+                <Image className="market-icon" src={marketRequest.image_url} alt="Market image preview" width={48} height={48} unoptimized />
               ) : null}
               <label className="image-upload-btn" htmlFor="detail-request-image-file">
                 {imageUploading ? "Uploading..." : marketRequest.image_url ? "Change image" : "Upload image"}

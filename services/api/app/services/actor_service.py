@@ -219,6 +219,35 @@ class ActorService:
         digits_only = "".join(char for char in phone if char.isdigit())
         return f"user_{digits_only[-8:]}" if digits_only else None
 
+    async def resolve_api_key_actor(
+        self, profile_id: UUID, permissions: list[str],
+    ) -> CurrentActor:
+        """Resolve an actor from an API key validation result."""
+        if settings.repository_backend == "postgres":
+            async with SessionLocal() as session:
+                row = (
+                    await session.execute(
+                        select(
+                            profiles.c.id, profiles.c.username,
+                            profiles.c.display_name, profiles.c.is_admin,
+                        ).where(profiles.c.id == profile_id)
+                    )
+                ).one_or_none()
+                if not row:
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail="API key is associated with a deleted profile.",
+                    )
+                return CurrentActor(
+                    id=row.id, username=row.username,
+                    display_name=row.display_name,
+                    is_admin=row.is_admin and "admin" in permissions,
+                )
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="API key auth requires postgres backend.",
+        )
+
     def _is_admin_user(self, claims: dict) -> bool:
         if settings.admin_email:
             email = claims.get("email")

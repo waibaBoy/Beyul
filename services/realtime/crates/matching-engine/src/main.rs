@@ -219,6 +219,23 @@ async fn process_order_command(
     let mut matched = taker.matched_quantity;
     let mut trade_events = Vec::new();
 
+    // Pre-fetch fee config once per order (not per fill)
+    let fee_row = sqlx::query(
+        r#"
+        select coalesce(platform_fee_bps, 200) as platform_fee_bps,
+               coalesce(creator_fee_bps, 0) as creator_fee_bps
+        from public.markets where id = $1
+        "#,
+    )
+    .bind(taker.market_id)
+    .fetch_one(&mut *tx)
+    .await
+    .context("failed to fetch market fee config")?;
+
+    let platform_fee_bps: i32 = fee_row.get("platform_fee_bps");
+    let creator_fee_bps: i32 = fee_row.get("creator_fee_bps");
+    let bps_divisor = Decimal::from(10_000);
+
     for maker in maker_candidates.iter_mut() {
         if remaining <= Decimal::ZERO {
             break;
@@ -246,22 +263,6 @@ async fn process_order_command(
         let gross_notional = fill_quantity * execution_price;
         let complementary_notional = fill_quantity - gross_notional;
 
-        // Compute fees from market config — makers pay 0, takers pay platform_fee_bps
-        let fee_row = sqlx::query(
-            r#"
-            select coalesce(platform_fee_bps, 200) as platform_fee_bps,
-                   coalesce(creator_fee_bps, 0) as creator_fee_bps
-            from public.markets where id = $1
-            "#,
-        )
-        .bind(taker.market_id)
-        .fetch_one(&mut *tx)
-        .await
-        .context("failed to fetch market fee config")?;
-
-        let platform_fee_bps: i32 = fee_row.get("platform_fee_bps");
-        let creator_fee_bps: i32 = fee_row.get("creator_fee_bps");
-        let bps_divisor = Decimal::from(10_000);
         let platform_fee = gross_notional * Decimal::from(platform_fee_bps) / bps_divisor;
         let creator_fee = gross_notional * Decimal::from(creator_fee_bps) / bps_divisor;
 

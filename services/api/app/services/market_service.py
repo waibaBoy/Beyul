@@ -25,8 +25,17 @@ class MarketService:
     def __init__(self, repository: MarketRepository) -> None:
         self._repository = repository
 
-    async def list_markets(self) -> list[MarketResponse]:
-        return await self._repository.list_markets()
+    async def list_markets(self, limit: int = 50, offset: int = 0, status_filter: str | None = None) -> list[MarketResponse]:
+        from app.services.cache_service import cache_get, cache_set
+
+        cache_key = f"markets:list:{limit}:{offset}:{status_filter or 'all'}"
+        cached = await cache_get(cache_key)
+        if cached is not None:
+            return [MarketResponse.model_validate(m) for m in cached]
+
+        rows = await self._repository.list_markets(limit=limit, offset=offset, status_filter=status_filter)
+        await cache_set(cache_key, [m.model_dump(mode="json") for m in rows], ttl_seconds=15)
+        return rows
 
     async def get_market(self, slug: str) -> MarketResponse:
         return await self._repository.get_market(slug)

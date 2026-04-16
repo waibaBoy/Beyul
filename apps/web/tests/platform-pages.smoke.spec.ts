@@ -4,23 +4,23 @@ test.describe("platform pages render", () => {
   test("landing page loads with hero and navigation", async ({ page }) => {
     await page.goto("/");
     await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
-    await expect(page.getByRole("navigation")).toBeVisible();
+    await expect(page.getByRole("navigation", { name: "Application routes" })).toBeVisible();
   });
 
   test("about page loads with product info", async ({ page }) => {
     await page.goto("/about");
-    await expect(page.getByRole("heading", { name: /about/i })).toBeVisible();
+    await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
     await expect(page.getByText(/2%/)).toBeVisible();
   });
 
   test("markets page loads", async ({ page }) => {
     await page.goto("/markets");
-    await expect(page.getByRole("heading")).toBeVisible();
+    await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
   });
 
   test("creators page loads with tier table", async ({ page }) => {
     await page.goto("/creators");
-    await expect(page.getByText(/creator/i)).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Creators" })).toBeVisible();
   });
 
   test("ops dashboard page loads", async ({ page }) => {
@@ -30,12 +30,12 @@ test.describe("platform pages render", () => {
 
   test("market-requests page loads", async ({ page }) => {
     await page.goto("/market-requests");
-    await expect(page.getByRole("heading")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Market Requests", exact: true })).toBeVisible();
   });
 
   test("communities page loads", async ({ page }) => {
     await page.goto("/communities");
-    await expect(page.getByRole("heading")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Communities" })).toBeVisible();
   });
 
   test("portfolio page shows sign-in prompt for unauthenticated user", async ({ page }) => {
@@ -45,7 +45,7 @@ test.describe("platform pages render", () => {
 
   test("auth pages load", async ({ page }) => {
     await page.goto("/auth/sign-in");
-    await expect(page.getByRole("heading")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Welcome back" })).toBeVisible();
 
     await page.goto("/auth/sign-up");
     await expect(page.getByRole("heading", { name: "Create your account" })).toBeVisible();
@@ -55,8 +55,7 @@ test.describe("platform pages render", () => {
 test.describe("navigation", () => {
   test("top nav contains key links", async ({ page }) => {
     await page.goto("/");
-    const nav = page.getByRole("navigation");
-    await expect(nav).toBeVisible();
+    await expect(page.getByRole("navigation", { name: "Application routes" })).toBeVisible();
   });
 
   test("about page link from landing", async ({ page }) => {

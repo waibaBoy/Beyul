@@ -1,6 +1,7 @@
 import { AccountCard } from "@/components/auth/account-card";
 import { AuthScreenShell } from "@/components/auth/auth-screen-shell";
 import { AuthSessionCard } from "@/components/auth/auth-session-card";
+import { PushNotificationToggle } from "@/components/app/push-notification-toggle";
 
 export default function AccountPage() {
   return (
@@ -11,6 +12,7 @@ export default function AccountPage() {
     >
       <AccountCard />
       <AuthSessionCard />
+      <PushNotificationToggle />
     </AuthScreenShell>
   );
 }

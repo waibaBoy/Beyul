@@ -84,6 +84,9 @@ class Settings(BaseSettings):
             raise ValueError(
                 "ORACLE_CALLBACK_SECRET must be set to a dedicated secret when APP_ENV is production, prod, or staging"
             )
+        supabase_url = (self.supabase_url or "").strip()
+        if not supabase_url:
+            logger.warning("SUPABASE_URL is empty in production — auth will rely on dev headers which are blocked")
         logger.info("production-like app_env=%s: repository and auth settings validated", env)
         return self
 

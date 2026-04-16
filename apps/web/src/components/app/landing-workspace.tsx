@@ -133,7 +133,7 @@ export const LandingWorkspace = () => {
     let isMounted = true;
     const load = async () => {
       try {
-        const next = await beyulApiFetch<Market[]>("/api/v1/markets");
+        const next = await beyulApiFetch<Market[]>("/api/v1/markets?limit=20&status=open");
         if (isMounted) setMarkets(next);
       } catch {
         // silent on landing

@@ -32,6 +32,7 @@ from app.services.trading_service import TradingService
 from app.services.push_notification_service import PushNotificationService
 from app.services.transfer_service import TransferService
 from app.services.api_key_service import ApiKeyService
+from app.services.email_service import EmailService
 
 
 class AppContainer:
@@ -104,6 +105,7 @@ class AppContainer:
         self.actor_service = ActorService()
         self.push_notification_service = PushNotificationService(session_factory)
         self.api_key_service = ApiKeyService(session_factory)
+        self.email_service = EmailService()
         self.supabase_auth_service = SupabaseAuthService()
 
 

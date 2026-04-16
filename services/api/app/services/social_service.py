@@ -223,7 +223,14 @@ class SocialService:
             ]
 
     async def get_pnl_leaderboard(self, limit: int = 25) -> list[dict]:
-        """Global PnL leaderboard ranked by realized PnL."""
+        """Global PnL leaderboard ranked by realized PnL (cached 60s)."""
+        from app.services.cache_service import cache_get, cache_set
+
+        cache_key = f"leaderboard:pnl:{limit}"
+        cached = await cache_get(cache_key)
+        if cached is not None:
+            return cached
+
         if not self._session_factory:
             return []
 
@@ -242,7 +249,7 @@ class SocialService:
                 .order_by(desc("total_pnl"))
                 .limit(limit)
             )
-            return [
+            rows = [
                 {
                     "rank": i + 1,
                     "username": row.username,
@@ -252,3 +259,5 @@ class SocialService:
                 }
                 for i, row in enumerate(result.fetchall())
             ]
+            await cache_set(cache_key, rows, ttl_seconds=60)
+            return rows
